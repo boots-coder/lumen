@@ -1,0 +1,27 @@
+============================================================
+  Demo 4: 多模型格式适配
+============================================================
+
+  📐 同一个工具在不同模型下的 Schema 格式:
+
+    gpt-4o                    → openai     type=function, function.name=bash  
+    claude-sonnet-4-6         → anthropic  name=bash, has input_schema  tokens=None
+    deepseek-chat             → deepseek   type=function, function.name=bash  tokens=<｜tool▁call▁begin｜>
+    llama3.1                  → llama      type=function, function.name=bash  tokens=<|python_tag|>
+
+  🚀 用不同模型执行同一任务:
+
+    Prompt: 用 bash 执行 python3 -c "print(sum(range(101)))"，告诉我 0 到 100 的累加和是多少。
+
+    ✅ gpt-4.1-nano-2025-04-14
+       Profile: openai (OpenAI GPT)
+       Tool:    bash(python3 -c "print(sum(range(10)
+       Answer:  0 到 100 的累加和是 5050。
+       Tokens:  1139
+
+    ✅ gpt-4.1-mini-2025-04-14
+       Profile: openai (OpenAI GPT)
+       Tool:    bash(python3 -c "print(sum(range(10)
+       Answer:  0 到 100 的累加和是 5050。
+       Tokens:  1139
+

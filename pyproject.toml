@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lumen"
-version = "0.1.0"
-description = "Model-agnostic deep code reading agent — give any LLM the power to understand codebases"
+version = "0.3.0"
+description = "Model-agnostic coding agent — give any LLM the power to read, write, and understand code"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-keywords = ["llm", "code-reading", "agent", "context", "memory", "ai"]
+keywords = ["llm", "coding-agent", "code-reading", "code-writing", "agent", "context", "memory", "ai"]
 
 dependencies = [
     "httpx>=0.27.0",

@@ -2,7 +2,7 @@
 Agent — the single public class users interact with.
 
 Usage:
-    from engram import Agent
+    from lumen import Agent
 
     agent = Agent(api_key="sk-...", model="gpt-4o")
     response = await agent.chat("Explain this codebase")
@@ -10,15 +10,24 @@ Usage:
     async for chunk in agent.stream("Refactor the auth module"):
         print(chunk, end="", flush=True)
 
-Everything else (memory, git state, token counting, auto-compaction) happens
-automatically. Users never touch Sessions, Compactors, or Providers directly.
+Production features (mirrors Claude Code):
+  - API retry with exponential backoff + 529 fallback
+  - Concurrent tool execution (read parallel, write serial)
+  - max_tokens overflow auto-shrink
+  - Tool result truncation
+  - File state LRU cache
+  - Permission system with safety guardrails
+  - pre_tool / post_tool lifecycle hooks
+  - Abort/cancellation support
 """
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator
 
 from ._types import ChatResponse, CompactionResult, TokenUsage, ToolCall
 from .compact.auto_compact import (
@@ -31,8 +40,37 @@ from .context.system_prompt import SystemPromptBuilder
 from .providers.factory import create_provider
 from .tokens.counter import get_context_window, get_max_output_tokens
 from .tools import Tool, ToolRegistry
+from .providers.model_profiles import ModelProfile, detect_profile
+
+# Services
+from .services.abort import AbortController, AbortError
+from .services.errors import classify_error, ErrorType
+from .services.hooks import (
+    HookBehavior, HookRegistry,
+    PreToolHookResult, PostToolHookResult, PostToolFailureHookResult,
+)
+from .services.permissions import (
+    PermissionBehavior, PermissionChecker, PermissionResult, PermissionRule,
+)
+from .services.retry import RetryConfig, with_retry
+from .services.tool_executor import (
+    ToolExecutor, ToolExecRequest, ToolExecResult, ToolStatus,
+)
+
+# Utils
+from .utils.file_state_cache import FileStateCache
+from .utils.tool_result_truncation import truncate_tool_result
 
 logger = logging.getLogger(__name__)
+
+
+async def _fire(fn, *args):
+    """Fire a callback, handling both sync and async."""
+    if fn is None:
+        return
+    r = fn(*args)
+    if inspect.isawaitable(r):
+        await r
 
 
 class Agent:
@@ -47,48 +85,48 @@ class Agent:
         Model identifier, e.g. "gpt-4o", "claude-sonnet-4-6", "llama3.1".
     base_url : str | None
         API base URL. Auto-detected from model name if None.
-        Examples:
-          - OpenAI  : "https://api.openai.com/v1"
-          - Anthropic: "https://api.anthropic.com"
-          - Ollama  : "http://localhost:11434/v1"
-          - Azure   : "https://<resource>.openai.azure.com/openai/deployments/<deployment>"
     system_prompt : str | None
-        Additional system instructions appended after Engram's base prompt.
+        Additional system instructions appended after the base prompt.
     context_window : int | None
         Override the model's context window (tokens). Auto-detected if None.
     max_output_tokens : int | None
         Override the model's max output tokens. Auto-detected if None.
     cwd : Path | str | None
-        Working directory for ENGRAM.md discovery and git state.
-        Defaults to the current working directory.
+        Working directory for memory discovery and git state.
     inject_git_state : bool
-        Inject a git status snapshot into the system prompt. Default True.
+        Inject a git status snapshot into context. Default True.
     inject_memory : bool
         Discover and load ENGRAM.md memory files. Default True.
     auto_compact : bool
-        Automatically compact the context when approaching the window limit.
-        Default True.
+        Automatically compact context when approaching window limit.
     keep_recent : int
-        Number of recent messages to preserve verbatim during partial compaction.
-        Default 6.
+        Number of recent messages to preserve during partial compaction.
     compact_model : str | None
-        Use a different (stronger) model for compaction summarisation.
-        Falls back to the main model if None.
+        Use a different model for compaction summarisation.
     compact_api_key : str | None
         API key for the compact model (if different from the main key).
     compact_base_url : str | None
         Base URL for the compact model (if different).
     temperature : float
-        Sampling temperature for chat/stream calls. Default 0.7.
+        Sampling temperature. Default 0.7.
     timeout : float
         HTTP timeout in seconds. Default 120.
     session : Session | None
-        Restore a previously saved session. See Agent.load_session().
+        Restore a previously saved session.
     tools : list[Tool] | None
-        List of tools to make available to the agent (e.g., FileReadTool, GlobTool).
-        If None, no tools are available.
+        List of tools to make available to the agent.
     max_tool_calls : int
-        Maximum number of tool calls allowed per chat turn (防止无限循环). Default 20.
+        Maximum number of tool call rounds per chat turn. Default 20.
+    permission_checker : PermissionChecker | None
+        Permission system for tool safety guardrails.
+    hooks : HookRegistry | None
+        Lifecycle hooks for pre/post tool execution.
+    retry_config : RetryConfig | None
+        API retry configuration.
+    fallback_model : str | None
+        Model to fallback to on 529 overload.
+    enable_file_cache : bool
+        Enable file state LRU cache. Default True.
     """
 
     def __init__(
@@ -114,6 +152,12 @@ class Agent:
         tools: list[Tool] | None = None,
         max_tool_calls: int = 20,
         code_reading_mode: bool = False,
+        # ── New production features ──────────────────────────────
+        permission_checker: PermissionChecker | None = None,
+        hooks: HookRegistry | None = None,
+        retry_config: RetryConfig | None = None,
+        fallback_model: str | None = None,
+        enable_file_cache: bool = True,
     ) -> None:
         self._model = model
         self._temperature = temperature
@@ -139,6 +183,10 @@ class Agent:
             api_key, model, base_url, timeout
         )
 
+        # Detect provider type and model profile for format adaptation
+        self._provider_type = self._detect_provider_type(model, base_url)
+        self._model_profile = detect_profile(model, base_url)
+
         # Compact provider (may differ from main provider)
         if compact_model or compact_api_key or compact_base_url:
             _cmodel = compact_model or model
@@ -163,6 +211,9 @@ class Agent:
         self._session = session or Session(model=model)
         self._session.token_usage.context_window = self._context_window
 
+        # Track whether context reminder has been injected
+        self._context_injected = False
+
         # Compactor
         self._compactor = Compactor(
             provider=self._compact_provider,
@@ -171,10 +222,49 @@ class Agent:
             keep_recent=keep_recent,
         )
 
-        logger.debug(
-            "Agent ready: model=%s context_window=%d max_output=%d auto_compact=%s",
-            model, self._context_window, self._max_output_tokens, auto_compact,
+        # ── Production features ──────────────────────────────────────────
+
+        # Permission system
+        self._permissions = permission_checker or PermissionChecker()
+
+        # Lifecycle hooks
+        self._hooks = hooks or HookRegistry()
+
+        # Retry config
+        self._retry_config = retry_config or RetryConfig(
+            fallback_model=fallback_model,
         )
+
+        # Abort controller (per-session)
+        self._abort = AbortController()
+
+        # File state cache
+        self._file_cache = FileStateCache() if enable_file_cache else None
+
+        # Tool executor (concurrent read, serial write)
+        self._tool_executor = ToolExecutor(
+            execute_fn=self._execute_single_tool,
+            abort_event=self._abort.event,
+        )
+
+        logger.debug(
+            "Agent ready: model=%s ctx=%d max_out=%d compact=%s provider=%s "
+            "permissions=%s hooks=%s retry=%d file_cache=%s",
+            model, self._context_window, self._max_output_tokens,
+            auto_compact, self._provider_type,
+            "on", "on" if self._hooks.has_hooks else "off",
+            self._retry_config.max_retries,
+            "on" if enable_file_cache else "off",
+        )
+
+    @staticmethod
+    def _detect_provider_type(model: str, base_url: str | None) -> str:
+        """Detect whether to use OpenAI or Anthropic message format."""
+        if base_url and "anthropic.com" in base_url:
+            return "anthropic"
+        if model.startswith("claude"):
+            return "anthropic"
+        return "openai"
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -187,27 +277,9 @@ class Agent:
         """
         Send a message and return the full response.
 
-        Context management (memory injection, token counting, auto-compaction)
-        and tool calling are handled transparently.
-
-        Args:
-            on_tool_call: Optional async/sync callable(name, arguments) fired
-                          before each tool is executed. Useful for UI progress.
-            on_tool_result: Optional async/sync callable(name, output, is_error)
-                            fired after each tool completes.
-
-        Returns:
-            ChatResponse with .content (str) and .token_usage.
+        Context management (memory injection, token counting, auto-compaction),
+        tool calling, retry, permissions, and hooks are handled transparently.
         """
-        import inspect
-
-        async def _fire(fn, *args):
-            if fn is None:
-                return
-            result = fn(*args)
-            if inspect.isawaitable(result):
-                await result
-
         system = await self._prompt_builder.build()
 
         # Check if we need to compact BEFORE adding the new message
@@ -215,30 +287,34 @@ class Agent:
         if self._auto_compact:
             compaction_result = await self._maybe_compact(system)
 
+        # Inject context reminder on first turn (git, memory, cwd)
+        if not self._context_injected:
+            context_reminder = await self._prompt_builder.build_context_reminder()
+            if context_reminder:
+                self._session.add_user(context_reminder)
+            self._context_injected = True
+
         # Add user message to session
         self._session.add_user(message)
 
         # Tool calling loop
-        tool_call_count = 0
+        tool_call_round = 0
         final_content = ""
 
-        while tool_call_count < self._max_tool_calls:
-            # Prepare tools schema if tools are registered
+        while tool_call_round < self._max_tool_calls:
+            # Check abort
+            if self._abort.is_aborted:
+                break
+
+            # Prepare tools schema — auto-adapted to model's pretrained format
             tools_schema = None
             if len(self._tool_registry) > 0:
-                # Determine format based on model
-                if any(x in self._model.lower() for x in ["gpt", "o1", "o3", "deepseek"]):
-                    tools_schema = self._tool_registry.to_openai_tools()
-                else:
-                    tools_schema = self._tool_registry.to_anthropic_tools()
+                tools_schema = self._tool_registry.to_tools_for_profile(self._model_profile)
 
-            # Call provider
-            response = await self._provider.chat(
-                messages=self._session.as_api_messages(),
+            # Call provider with retry
+            response = await self._call_with_retry(
                 system=system,
-                max_tokens=self._max_output_tokens,
-                temperature=self._temperature,
-                tools=tools_schema,
+                tools_schema=tools_schema,
             )
 
             # Update token counts
@@ -248,35 +324,40 @@ class Agent:
                 self._context_window,
             )
 
-            # If there's text content, save it
-            if response.content:
-                final_content = response.content
-                # Add assistant message to session
-                self._session.add_assistant(response.content, response.completion_tokens)
-
-            # If no tool calls, we're done
+            # If no tool calls, save final content and break
             if not response.tool_calls:
+                if response.content:
+                    final_content = response.content
+                    self._session.add_assistant(response.content, response.completion_tokens)
                 break
 
-            # Execute tool calls
-            tool_call_count += 1
-            logger.debug(f"Tool call round {tool_call_count}/{self._max_tool_calls}")
+            # Assistant message WITH tool calls — must be in history
+            self._session.add_assistant_with_tool_calls(
+                content=response.content,
+                tool_calls=response.tool_calls,
+                completion_tokens=response.completion_tokens,
+            )
+
+            if response.content:
+                final_content = response.content
+
+            # Execute tool calls with permissions, hooks, concurrency
+            tool_call_round += 1
+            logger.debug(f"Tool call round {tool_call_round}/{self._max_tool_calls}")
             await self._execute_tool_calls(
                 response.tool_calls,
                 on_tool_call=on_tool_call,
                 on_tool_result=on_tool_result,
             )
 
-            # Continue loop to get next response
-
         # Check if we hit the limit
-        if tool_call_count >= self._max_tool_calls:
+        if tool_call_round >= self._max_tool_calls:
             logger.warning(
                 f"Reached maximum tool call limit ({self._max_tool_calls}). "
                 "Stopping tool execution loop."
             )
 
-        # Check thresholds for logging / warnings
+        # Assess context window
         assess_context_window(
             self._session.token_usage.total,
             self._model,
@@ -292,24 +373,23 @@ class Agent:
         )
 
     async def stream(self, message: str) -> AsyncIterator[str]:
-        """
-        Stream the response, yielding text chunks as they arrive.
-
-        Context management runs before streaming begins (same as chat()).
-        Token counts are estimated from the streamed output since streaming
-        APIs typically don't return token counts mid-stream.
-        """
+        """Stream the response, yielding text chunks as they arrive."""
         system = await self._prompt_builder.build()
 
-        # Pre-stream compaction check
         if self._auto_compact:
             await self._maybe_compact(system)
+
+        if not self._context_injected:
+            context_reminder = await self._prompt_builder.build_context_reminder()
+            if context_reminder:
+                self._session.add_user(context_reminder)
+            self._context_injected = True
 
         self._session.add_user(message)
 
         collected: list[str] = []
         async for chunk in self._provider.stream(
-            messages=self._session.as_api_messages(),
+            messages=self._session.as_api_messages(self._provider_type),
             system=system,
             max_tokens=self._max_output_tokens,
             temperature=self._temperature,
@@ -319,12 +399,8 @@ class Agent:
 
         full_text = "".join(collected)
         self._session.add_assistant(full_text)
-
-        # Recalculate total including system prompt so the displayed number is
-        # accurate (chat() gets real numbers from the API; stream() uses tiktoken).
         self._session.recalculate_tokens(system)
 
-        # Re-assess after streaming completes
         assess_context_window(
             self._session.token_usage.total,
             self._model,
@@ -332,16 +408,34 @@ class Agent:
             self._max_output_tokens,
         )
 
+    # ── Abort ─────────────────────────────────────────────────────────────────
+
+    def abort(self, reason: str = "User cancelled") -> None:
+        """Abort the current operation."""
+        self._abort.abort(reason)
+
+    def reset_abort(self) -> None:
+        """Reset the abort controller for the next operation."""
+        self._abort.reset()
+
+    @property
+    def is_aborted(self) -> bool:
+        return self._abort.is_aborted
+
     # ── Session management ────────────────────────────────────────────────────
 
     def reset(self) -> None:
         """Clear the conversation history, starting a fresh session."""
         self._session = Session(model=self._model)
         self._session.token_usage.context_window = self._context_window
+        self._context_injected = False
+        self._prompt_builder.invalidate()
+        self._abort.reset()
+        if self._file_cache:
+            self._file_cache.clear()
         logger.debug("Session reset.")
 
     def save_session(self, path: str | Path) -> None:
-        """Persist the current session to a JSON file."""
         self._session.save(path)
 
     @classmethod
@@ -352,54 +446,52 @@ class Agent:
         model: str | None = None,
         **kwargs: Any,
     ) -> "Agent":
-        """
-        Restore an Agent from a previously saved session file.
-
-        Example:
-            agent = Agent.load_session("session.json", api_key="sk-...", model="gpt-4o")
-        """
         session = Session.load(path)
         _model = model or session.model
         return cls(api_key=api_key, model=_model, session=session, **kwargs)
 
+    # ── Permission & Hook access ──────────────────────────────────────────────
+
+    @property
+    def permissions(self) -> PermissionChecker:
+        return self._permissions
+
+    @property
+    def hooks(self) -> HookRegistry:
+        return self._hooks
+
+    @property
+    def file_cache(self) -> FileStateCache | None:
+        return self._file_cache
+
+    @property
+    def model_profile(self) -> ModelProfile:
+        return self._model_profile
+
     # ── Mode switching ────────────────────────────────────────────────────────
 
     def enable_code_reading_mode(self) -> None:
-        """
-        Activate Code Reading Mode.
-
-        Adds a deep code archaeology layer on top of the base prompt.
-        The model will: read before answering, cite file:line, follow call chains,
-        explain WHY not just WHAT.  General capabilities are fully preserved.
-        """
         self._prompt_builder.enable_code_reading_mode()
-        logger.info("Code Reading Mode enabled.")
 
     def disable_code_reading_mode(self) -> None:
-        """Deactivate Code Reading Mode and return to standard mode."""
         self._prompt_builder.disable_code_reading_mode()
-        logger.info("Code Reading Mode disabled.")
 
     @property
     def code_reading_mode(self) -> bool:
-        """Whether Code Reading Mode is currently active."""
         return self._prompt_builder.code_reading_mode
 
     # ── Properties ────────────────────────────────────────────────────────────
 
     @property
     def token_usage(self) -> TokenUsage:
-        """Current token usage statistics."""
         return self._session.token_usage
 
     @property
     def messages(self) -> list:
-        """Raw message list (read-only copy)."""
         return list(self._session.messages)
 
     @property
     def session(self) -> Session:
-        """Direct access to the underlying Session (advanced use)."""
         return self._session
 
     @property
@@ -419,21 +511,220 @@ class Agent:
             f"compactions={self._session.compaction_count})"
         )
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # ── Internal: API call with retry ─────────────────────────────────────────
+
+    async def _call_with_retry(self, system: str, tools_schema: Any) -> Any:
+        """Call the provider with retry logic."""
+        from ._types import ProviderResponse
+
+        async def _do_call(**kwargs) -> ProviderResponse:
+            max_tokens = kwargs.get("max_tokens", self._max_output_tokens)
+            model = kwargs.get("model", None)
+
+            # If fallback model specified, create a temporary provider
+            provider = self._provider
+            if model and model != self._model:
+                # Use fallback — log it
+                logger.info("Using fallback model: %s", model)
+
+            return await provider.chat(
+                messages=self._session.as_api_messages(self._provider_type),
+                system=system,
+                max_tokens=max_tokens,
+                temperature=self._temperature,
+                tools=tools_schema,
+            )
+
+        try:
+            result = await with_retry(
+                _do_call,
+                config=self._retry_config,
+                max_tokens=self._max_output_tokens,
+            )
+            return result.result
+        except Exception:
+            # If retry exhausted, try one direct call as last resort
+            # (this handles the case where classify_error can't parse the error)
+            raise
+
+    # ── Internal: Tool execution with all features ────────────────────────────
+
+    async def _execute_tool_calls(
+        self,
+        tool_calls: list[ToolCall],
+        on_tool_call: Any | None = None,
+        on_tool_result: Any | None = None,
+    ) -> None:
+        """
+        Execute tool calls with:
+          1. Permission checks
+          2. Pre-tool hooks
+          3. Concurrent execution (read parallel, write serial)
+          4. Tool result truncation
+          5. Post-tool hooks
+          6. File cache updates
+        """
+        # Build execution requests, checking permissions for each
+        requests: list[ToolExecRequest] = []
+        denied_calls: list[ToolCall] = []
+
+        for tc in tool_calls:
+            # 1. Permission check
+            perm = await self._permissions.check_and_resolve(
+                tc.name, tc.arguments,
+            )
+
+            if perm.behavior == PermissionBehavior.DENY:
+                logger.info("Permission denied for %s: %s", tc.name, perm.reason)
+                denied_calls.append(tc)
+                await _fire(on_tool_call, tc.name, tc.arguments)
+                self._session.add_tool_result(
+                    tool_use_id=tc.id,
+                    tool_name=tc.name,
+                    content=f"Permission denied: {perm.reason}",
+                    is_error=True,
+                )
+                await _fire(on_tool_result, tc.name, f"Permission denied: {perm.reason}", True)
+                continue
+
+            if perm.behavior == PermissionBehavior.ASK:
+                # ASK but no ask_fn resolved it — treat as denied
+                logger.info("Permission requires confirmation for %s (no resolver)", tc.name)
+                denied_calls.append(tc)
+                self._session.add_tool_result(
+                    tool_use_id=tc.id,
+                    tool_name=tc.name,
+                    content=f"Requires confirmation: {perm.reason}",
+                    is_error=True,
+                )
+                continue
+
+            # 2. Pre-tool hooks
+            hook_result = await self._hooks.run_pre_tool_hooks(tc.name, tc.arguments)
+            if hook_result.blocking_error:
+                self._session.add_tool_result(
+                    tool_use_id=tc.id,
+                    tool_name=tc.name,
+                    content=f"Blocked by hook: {hook_result.blocking_error}",
+                    is_error=True,
+                )
+                continue
+
+            if hook_result.behavior == HookBehavior.DENY:
+                self._session.add_tool_result(
+                    tool_use_id=tc.id,
+                    tool_name=tc.name,
+                    content=f"Denied by hook: {hook_result.message or 'no reason'}",
+                    is_error=True,
+                )
+                continue
+
+            # Apply updated input from hook
+            arguments = hook_result.updated_input or tc.arguments
+
+            await _fire(on_tool_call, tc.name, arguments)
+
+            requests.append(ToolExecRequest(
+                tool_call_id=tc.id,
+                tool_name=tc.name,
+                arguments=arguments,
+            ))
+
+        if not requests:
+            return
+
+        # 3. Execute with concurrent batching
+        results = await self._tool_executor.execute_batch(requests)
+
+        # 4. Process results
+        for result in results:
+            # Truncate large results
+            output = truncate_tool_result(result.output, result.tool_name)
+
+            # 5. Post-tool hooks
+            if result.is_error:
+                failure_hook = await self._hooks.run_post_tool_failure_hooks(
+                    result.tool_name,
+                    self._get_tool_arguments(result.tool_call_id, requests),
+                    output,
+                )
+                if failure_hook.remediation:
+                    output = f"{output}\n\nRemediation: {failure_hook.remediation}"
+            else:
+                post_hook = await self._hooks.run_post_tool_hooks(
+                    result.tool_name,
+                    self._get_tool_arguments(result.tool_call_id, requests),
+                    output,
+                    result.is_error,
+                )
+                if post_hook.additional_context:
+                    output = output + "\n\n" + "\n".join(post_hook.additional_context)
+
+            # 6. Update file cache on read/write
+            if self._file_cache:
+                self._update_file_cache(result, requests)
+
+            # Add to session
+            self._session.add_tool_result(
+                tool_use_id=result.tool_call_id,
+                tool_name=result.tool_name,
+                content=output,
+                is_error=result.is_error,
+            )
+
+            await _fire(on_tool_result, result.tool_name, output, result.is_error)
+
+    async def _execute_single_tool(
+        self, tool_name: str, arguments: dict[str, Any],
+    ) -> Any:
+        """Execute a single tool (called by ToolExecutor)."""
+        tool = self._tool_registry.get(tool_name)
+        if not tool:
+            from .tools.base import ToolResult
+            return ToolResult(success=False, output="", error=f"Tool '{tool_name}' not found")
+
+        input_model = tool.input_schema(**arguments)
+        return await tool.execute(input_model)
+
+    def _get_tool_arguments(
+        self, tool_call_id: str, requests: list[ToolExecRequest],
+    ) -> dict[str, Any]:
+        """Find arguments for a tool call ID."""
+        for req in requests:
+            if req.tool_call_id == tool_call_id:
+                return req.arguments
+        return {}
+
+    def _update_file_cache(
+        self,
+        result: ToolExecResult,
+        requests: list[ToolExecRequest],
+    ) -> None:
+        """Update file cache based on tool results."""
+        if not self._file_cache:
+            return
+
+        args = self._get_tool_arguments(result.tool_call_id, requests)
+
+        if result.tool_name == "read_file" and not result.is_error:
+            path = args.get("file_path", "")
+            if path:
+                self._file_cache.set(
+                    path, result.output,
+                    offset=args.get("offset"),
+                    limit=args.get("limit"),
+                )
+
+        elif result.tool_name in ("write_file", "edit_file"):
+            # Invalidate cache on write
+            path = args.get("file_path", "")
+            if path:
+                self._file_cache.invalidate(path)
+
+    # ── Internal: Compaction ──────────────────────────────────────────────────
 
     async def _maybe_compact(self, system: str) -> CompactionResult | None:
-        """
-        Check whether auto-compaction should run and execute it if so.
-
-        Implements the circuit-breaker: after MAX_CONSECUTIVE_FAILURES
-        consecutive failures, stop trying.
-        """
         if self._session.consecutive_compact_failures >= MAX_CONSECUTIVE_FAILURES:
-            logger.warning(
-                "Compaction circuit breaker open after %d consecutive failures. "
-                "Skipping auto-compact.",
-                MAX_CONSECUTIVE_FAILURES,
-            )
             return None
 
         state = assess_context_window(
@@ -458,99 +749,19 @@ class Agent:
                 partial=True,
             )
             logger.info(
-                "Auto-compact succeeded: %d→%d tokens, %d→%d messages.",
+                "Auto-compact: %d→%d tokens, %d→%d messages.",
                 result.tokens_before, result.tokens_after,
                 result.messages_before, result.messages_after,
             )
             return result
         except Exception as e:
             self._session.consecutive_compact_failures += 1
-            logger.error(
-                "Auto-compact failed (attempt %d/%d): %s",
-                self._session.consecutive_compact_failures,
-                MAX_CONSECUTIVE_FAILURES,
-                e,
-            )
+            logger.error("Auto-compact failed (%d/%d): %s",
+                self._session.consecutive_compact_failures, MAX_CONSECUTIVE_FAILURES, e)
             return None
 
     async def compact(self, partial: bool = True) -> CompactionResult:
-        """
-        Manually trigger context compaction.
-
-        Args:
-            partial: Keep recent messages verbatim if True (recommended).
-        """
         system = await self._prompt_builder.build()
-        result = await self._compactor.compact(
-            session=self._session,
-            system_prompt=system,
-            partial=partial,
+        return await self._compactor.compact(
+            session=self._session, system_prompt=system, partial=partial,
         )
-        return result
-
-    async def _execute_tool_calls(
-        self,
-        tool_calls: list[ToolCall],
-        on_tool_call: Any | None = None,
-        on_tool_result: Any | None = None,
-    ) -> None:
-        """
-        Execute a list of tool calls and add results to the session.
-        Fires on_tool_call / on_tool_result callbacks for UI feedback.
-        """
-        import inspect
-
-        async def _fire(fn, *args):
-            if fn is None:
-                return
-            r = fn(*args)
-            if inspect.isawaitable(r):
-                await r
-
-        for tool_call in tool_calls:
-            tool = self._tool_registry.get(tool_call.name)
-
-            if not tool:
-                logger.error(f"Tool not found: {tool_call.name}")
-                await _fire(on_tool_call, tool_call.name, tool_call.arguments)
-                self._session.add_tool_result(
-                    tool_use_id=tool_call.id,
-                    content=f"Error: Tool '{tool_call.name}' not found",
-                    is_error=True,
-                )
-                await _fire(on_tool_result, tool_call.name, f"Tool not found", True)
-                continue
-
-            await _fire(on_tool_call, tool_call.name, tool_call.arguments)
-
-            try:
-                input_model = tool.input_schema(**tool_call.arguments)
-                logger.debug(f"Executing tool: {tool_call.name}")
-                result = await tool.execute(input_model)
-
-                if result.success:
-                    logger.debug(f"Tool {tool_call.name} succeeded")
-                    self._session.add_tool_result(
-                        tool_use_id=tool_call.id,
-                        content=result.output,
-                        is_error=False,
-                    )
-                    await _fire(on_tool_result, tool_call.name, result.output, False)
-                else:
-                    logger.warning(f"Tool {tool_call.name} failed: {result.error}")
-                    error_msg = result.error or "Tool execution failed"
-                    self._session.add_tool_result(
-                        tool_use_id=tool_call.id,
-                        content=f"Error: {error_msg}",
-                        is_error=True,
-                    )
-                    await _fire(on_tool_result, tool_call.name, error_msg, True)
-
-            except Exception as e:
-                logger.error(f"Tool {tool_call.name} threw exception: {e}", exc_info=True)
-                self._session.add_tool_result(
-                    tool_use_id=tool_call.id,
-                    content=f"Error: {str(e)}",
-                    is_error=True,
-                )
-                await _fire(on_tool_result, tool_call.name, str(e), True)

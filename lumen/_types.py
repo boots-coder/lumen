@@ -1,4 +1,4 @@
-"""Core type definitions for Engram."""
+"""Core type definitions for Lumen."""
 
 from __future__ import annotations
 
@@ -16,6 +16,15 @@ class Role(str, Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+@dataclass
+class ToolCall:
+    """A tool call requested by the model."""
+    id: str  # Unique ID for this tool call
+    name: str  # Tool name
+    arguments: dict[str, Any]  # Tool arguments (already parsed)
 
 
 @dataclass
@@ -29,17 +38,111 @@ class Message:
     # Marks a compaction boundary summary message
     is_compact_summary: bool = False
 
-    def to_dict(self) -> dict[str, Any]:
+    # ── Tool calling support ──────────────────────────────────────────────
+    # For assistant messages that contain tool calls
+    tool_calls: list[ToolCall] | None = None
+    # For tool result messages (role == TOOL)
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+
+    def to_openai_dict(self) -> dict[str, Any]:
+        """Convert to OpenAI-compatible message format."""
+        if self.role == Role.TOOL:
+            return {
+                "role": "tool",
+                "tool_call_id": self.tool_call_id or "",
+                "content": self.content,
+            }
+
+        if self.role == Role.ASSISTANT and self.tool_calls:
+            msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": self.content or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": (
+                                tc.arguments if isinstance(tc.arguments, str)
+                                else __import__("json").dumps(tc.arguments)
+                            ),
+                        },
+                    }
+                    for tc in self.tool_calls
+                ],
+            }
+            return msg
+
         return {"role": self.role.value, "content": self.content}
+
+    def to_anthropic_dict(self) -> dict[str, Any]:
+        """Convert to Anthropic Messages API format."""
+        if self.role == Role.TOOL:
+            # Anthropic: tool results are user messages with tool_result content blocks
+            return {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": self.tool_call_id or "",
+                        "content": self.content,
+                    }
+                ],
+            }
+
+        if self.role == Role.ASSISTANT and self.tool_calls:
+            # Anthropic: assistant messages with tool_use content blocks
+            content_blocks: list[dict[str, Any]] = []
+            if self.content:
+                content_blocks.append({"type": "text", "text": self.content})
+            for tc in self.tool_calls:
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "input": tc.arguments,
+                })
+            return {"role": "assistant", "content": content_blocks}
+
+        return {"role": self.role.value, "content": self.content}
+
+    def to_dict(self) -> dict[str, Any]:
+        """Default: OpenAI format (most common)."""
+        return self.to_openai_dict()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Message":
-        return cls(
-            role=Role(data["role"]),
-            content=data["content"],
+        role_str = data.get("role", "user")
+        # Map "tool" role
+        try:
+            role = Role(role_str)
+        except ValueError:
+            role = Role.USER
+
+        msg = cls(
+            role=role,
+            content=data.get("content", "") or "",
             token_count=data.get("token_count", 0),
             is_compact_summary=data.get("is_compact_summary", False),
+            tool_call_id=data.get("tool_call_id"),
+            tool_name=data.get("tool_name"),
         )
+
+        # Restore tool_calls if present
+        tc_data = data.get("tool_calls")
+        if tc_data:
+            msg.tool_calls = [
+                ToolCall(
+                    id=tc.get("id", ""),
+                    name=tc.get("name", ""),
+                    arguments=tc.get("arguments", {}),
+                )
+                for tc in tc_data
+            ]
+
+        return msg
 
 
 # ---------------------------------------------------------------------------
@@ -117,19 +220,7 @@ class MemoryFile:
 
 
 # ---------------------------------------------------------------------------
-# Tool calling
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ToolCall:
-    """A tool call requested by the model."""
-    id: str  # Unique ID for this tool call
-    name: str  # Tool name
-    arguments: dict[str, Any]  # Tool arguments (already parsed)
-
-
-# ---------------------------------------------------------------------------
-# Chat response
+# Provider response
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -141,6 +232,10 @@ class ProviderResponse:
     prompt_tokens: int
     completion_tokens: int
 
+
+# ---------------------------------------------------------------------------
+# Chat response
+# ---------------------------------------------------------------------------
 
 @dataclass
 class ChatResponse:

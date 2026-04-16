@@ -8,17 +8,6 @@ Orchestrates the full compaction flow:
   4. Replace the session's message history with:
        [compact_summary_message] + [kept_recent_messages]
   5. Recalculate token counts
-
-Two compaction modes:
-  - BASE compaction  : entire history → one summary message
-  - PARTIAL compaction: keep the last K messages verbatim, summarise everything before
-  - Circuit breaker  : stop after MAX_CONSECUTIVE_FAILURES consecutive failures
-
-Partial compaction strategy:
-  We keep the most recent `keep_recent` messages intact so the model retains
-  immediate context (the last task, last code snippet, etc.) without having
-  to re-derive it from the summary. See also:
-  
 """
 
 from __future__ import annotations
@@ -39,8 +28,6 @@ from .prompt import (
 
 logger = logging.getLogger(__name__)
 
-# How many recent messages to keep verbatim in partial compaction.
-# Uses a simple fixed keep_recent count.
 DEFAULT_KEEP_RECENT = 6
 
 
@@ -49,13 +36,12 @@ class Compactor:
     Stateless compaction engine.
 
     Instantiate once and call compact() whenever the auto-compact threshold
-    is reached. The Compactor does not mutate the Session directly — it returns
-    a CompactionResult and lets the caller (Agent) apply it.
+    is reached.
     """
 
     def __init__(
         self,
-        provider,  # BaseProvider — injected by Agent to avoid circular import
+        provider,  # BaseProvider
         model: str,
         max_output_tokens: int = 8_000,
         keep_recent: int = DEFAULT_KEEP_RECENT,
@@ -65,36 +51,18 @@ class Compactor:
         self._max_output_tokens = max_output_tokens
         self._keep_recent = keep_recent
 
-    # ── public API ────────────────────────────────────────────────────────────
-
     async def compact(
         self,
         session: Session,
         system_prompt: str,
         partial: bool = True,
     ) -> CompactionResult:
-        """
-        Compact the session's message history.
-
-        Args:
-            session:       The live session to compact.
-            system_prompt: Current system prompt (used for token recalculation).
-            partial:       If True, keep the most recent messages verbatim and
-                           only summarise earlier history. If False, summarise
-                           the entire conversation.
-
-        Returns:
-            CompactionResult with before/after statistics.
-
-        Raises:
-            RuntimeError if compaction fails after MAX_CONSECUTIVE_FAILURES.
-        """
+        """Compact the session's message history."""
         messages = session.messages
         tokens_before = session.token_usage.total
         msg_count_before = len(messages)
 
         if not messages:
-            logger.warning("compact() called on empty session — nothing to do.")
             return CompactionResult(
                 summary="",
                 messages_before=0,
@@ -103,29 +71,24 @@ class Compactor:
                 tokens_after=tokens_before,
             )
 
-        # ── Choose compaction mode ────────────────────────────────────────────
+        # Choose compaction mode
         if partial and len(messages) > self._keep_recent:
             to_summarise = messages[: -self._keep_recent]
             to_keep = messages[-self._keep_recent :]
             prompt_template = PARTIAL_COMPACT_PROMPT
-            logger.info(
-                "Partial compaction: summarising %d messages, keeping %d recent.",
-                len(to_summarise), len(to_keep),
-            )
         else:
             to_summarise = messages
             to_keep = []
             prompt_template = BASE_COMPACT_PROMPT
-            logger.info("Full compaction: summarising all %d messages.", len(to_summarise))
 
-        # ── Call the model ────────────────────────────────────────────────────
+        # Call the model
         summary_raw = await self._call_compact_model(to_summarise, prompt_template)
 
-        # ── Parse summary ─────────────────────────────────────────────────────
+        # Parse summary
         summary = extract_summary(summary_raw)
         compact_message_text = build_compact_user_message(summary)
 
-        # ── Rebuild message list ──────────────────────────────────────────────
+        # Rebuild message list
         compact_msg = Message(
             role=Role.USER,
             content=compact_message_text,
@@ -135,14 +98,9 @@ class Compactor:
 
         new_messages: list[Message] = [compact_msg] + list(to_keep)
 
-        # ── Update session ────────────────────────────────────────────────────
-        new_total = session.recalculate_tokens_for(new_messages, system_prompt)
+        # Update session
+        new_total = _recalculate_tokens_for(session, new_messages, system_prompt)
         session.replace_messages(new_messages, new_total)
-
-        logger.info(
-            "Compaction complete: %d → %d messages, %d → %d tokens.",
-            msg_count_before, len(new_messages), tokens_before, new_total,
-        )
 
         return CompactionResult(
             summary=summary,
@@ -153,25 +111,33 @@ class Compactor:
             kept_recent_count=len(to_keep),
         )
 
-    # ── internal ──────────────────────────────────────────────────────────────
-
     async def _call_compact_model(
         self,
         messages_to_summarise: list[Message],
         prompt_template: str,
     ) -> str:
-        """
-        Send the compaction request to the model.
+        """Send the compaction request to the model."""
+        # Convert messages to simple user/assistant format for compaction
+        # (strip tool messages to avoid confusing the compaction model)
+        api_messages = []
+        for m in messages_to_summarise:
+            if m.role == Role.TOOL:
+                # Convert tool results to user messages for compaction
+                api_messages.append({
+                    "role": "user",
+                    "content": f"[Tool result for {m.tool_name or 'unknown'}]: {m.content}",
+                })
+            elif m.role == Role.ASSISTANT and m.tool_calls:
+                # Include tool call info in content
+                tc_info = ", ".join(tc.name for tc in m.tool_calls)
+                text = m.content or ""
+                api_messages.append({
+                    "role": "assistant",
+                    "content": f"{text}\n[Called tools: {tc_info}]" if text else f"[Called tools: {tc_info}]",
+                })
+            else:
+                api_messages.append(m.to_openai_dict())
 
-        The compaction prompt is passed as the system message.
-        The conversation history to summarise is the user/assistant messages.
-        We ask the model to produce the summary in a single response
-        (no tool calls, no streaming — we want the full output).
-        """
-        api_messages = [m.to_dict() for m in messages_to_summarise]
-
-        # Append a final user message asking for the summary
-        # (required for models that need a user turn to respond)
         api_messages.append({
             "role": "user",
             "content": (
@@ -180,39 +146,22 @@ class Compactor:
             ),
         })
 
-        text, _, _ = await self._provider.chat(
+        response = await self._provider.chat(
             messages=api_messages,
             system=prompt_template,
             max_tokens=self._max_output_tokens,
-            temperature=0.0,  # deterministic for consistent summaries
+            temperature=0.0,
         )
-        return text
+        return response.content or ""
 
 
-# ── Session extension helper ──────────────────────────────────────────────────
-# We add recalculate_tokens_for() as a standalone function rather than patching
-# Session, to keep Session free of compact-module imports.
-
-def recalculate_tokens_for(
+def _recalculate_tokens_for(
     session: Session,
     messages: list[Message],
     system_prompt: str,
 ) -> int:
     """Recalculate the total token count for a given message list + system prompt."""
     all_msgs = [{"role": "system", "content": system_prompt}]
-    all_msgs += [m.to_dict() for m in messages]
+    all_msgs += [m.to_openai_dict() for m in messages]
     total = count_messages_tokens(all_msgs, session.model)
     return total
-
-
-# Monkey-patch onto Session so Compactor can call session.recalculate_tokens_for()
-def _patch_session() -> None:
-    from ..context.session import Session
-
-    def _method(self: Session, messages: list[Message], system_prompt: str) -> int:
-        return recalculate_tokens_for(self, messages, system_prompt)
-
-    Session.recalculate_tokens_for = _method  # type: ignore[attr-defined]
-
-
-_patch_session()

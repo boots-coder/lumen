@@ -1,0 +1,40 @@
+============================================================
+  Demo 3: Agent 找 Bug 并修复
+============================================================
+  📄 已创建有 bug 的文件: /tmp/lumen_demo/buggy_calc.py
+  🐛 内含 4 个 bug，看 Agent 能不能全部修复
+
+  🔧 read_file
+    ✅ 1	"""简单计算器 — 有几个 bug，你能找到吗？"""
+  ✏️  edit: 'def add(a, b):
+    return a - b  # Bug 1' → 'def add(a, b):
+    return a + b  # 修复 Bu'
+  ✏️  edit: 'def multiply(a, b):
+    return a * a  # ' → 'def multiply(a, b):
+    return a * b  # '
+  ✏️  edit: 'def divide(a, b):
+    return a / b  # Bu' → 'def divide(a, b):
+    if b == 0:
+       '
+  ✏️  edit: 'def power(a, n):
+    """计算 a 的 n 次方"""
+ ' → 'def power(a, n):
+    """计算 a 的 n 次方"""
+ '
+    ✅ [edit_file] buggy_calc.py  (line 3, 1 replacement)
+    ✅ [edit_file] buggy_calc.py  (line 6, 1 replacement)
+    ✅ [edit_file] buggy_calc.py  (line 9, 1 replacement)
+    ✅ [edit_file] buggy_calc.py  (line 14, 1 replacement)
+  💻 bash: python /tmp/lumen_demo/buggy_calc.py
+    ✅ All tests passed!
+
+────────────────────────────────────────────────────────────
+📋 调用: read_file → edit_file → edit_file → edit_file → edit_file → bash
+📊 Token: 3257
+────────────────────────────────────────────────────────────
+所有 bug 已修复，代码测试全部通过。需要我帮你做其他事情吗？
+
+🔍 验证修复:
+  ✅ add 修复
+  ✅ multiply 修复
+  ✅ power 初始值修复

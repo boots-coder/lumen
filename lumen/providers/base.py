@@ -5,25 +5,18 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
-# Import ProviderResponse from _types
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from _types import ProviderResponse
+from .._types import ProviderResponse
 
 
 class BaseProvider(ABC):
     """
-    Thin adapter between Engram's message format and a specific LLM API.
+    Thin adapter between Lumen's message format and a specific LLM API.
 
     Each provider normalises:
       - Request construction  (messages → API payload)
       - Response parsing      (API response → ProviderResponse)
       - Streaming             (SSE / chunked → AsyncIterator[str])
       - Tool calling          (tools → API format, tool_calls parsing)
-
-    Engram's context management sits entirely above this layer and never
-    touches provider-specific details.
     """
 
     @abstractmethod
@@ -39,11 +32,11 @@ class BaseProvider(ABC):
         Send messages and return provider response.
 
         Args:
-            messages: List of message dicts (role, content).
+            messages: List of message dicts (already formatted for this provider).
             system:   System prompt string.
             max_tokens: Maximum tokens to generate.
             temperature: Sampling temperature.
-            tools: Optional list of tool schemas (OpenAI or Anthropic format).
+            tools: Optional list of tool schemas.
 
         Returns:
             ProviderResponse with content, tool_calls, and token counts.
@@ -57,11 +50,5 @@ class BaseProvider(ABC):
         max_tokens: int,
         temperature: float,
     ) -> AsyncIterator[str]:
-        """
-        Stream response text chunks.
-
-        Yields raw text deltas as they arrive from the API.
-        Note: Streaming does not support tool calls yet.
-        """
-        # mypy requires an explicit yield in abstract async generators
+        """Stream response text chunks."""
         yield  # type: ignore[misc]

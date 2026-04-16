@@ -1,8 +1,10 @@
-"""Engram tools for deep code reading and analysis."""
+"""Lumen tools for code reading, writing, and analysis."""
 
 from .base import Tool, ToolResult
 from .registry import ToolRegistry
 from .file_read import FileReadTool
+from .file_write import FileWriteTool
+from .file_edit import FileEditTool
 from .glob import GlobTool
 from .grep import GrepTool
 from .bash import BashTool
@@ -14,6 +16,8 @@ __all__ = [
     "ToolResult",
     "ToolRegistry",
     "FileReadTool",
+    "FileWriteTool",
+    "FileEditTool",
     "GlobTool",
     "GrepTool",
     "BashTool",

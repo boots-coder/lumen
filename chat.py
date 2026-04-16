@@ -1,5 +1,5 @@
 """
-Lumen — Interactive Code Reading Agent
+Lumen — Interactive Coding Agent
 
 直接运行，在 UI 内选择模型和输入 API Key：
     python chat.py
@@ -47,8 +47,12 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.styles import Style as PTStyle
 
-from lumen import Agent
-from lumen.tools import FileReadTool, GlobTool, GrepTool, BashTool, TreeTool, DefinitionsTool
+from lumen import Agent, PermissionChecker, PermissionBehavior, HookRegistry, RetryConfig
+from lumen.services.permissions import PermissionRule
+from lumen.tools import (
+    FileReadTool, FileWriteTool, FileEditTool,
+    GlobTool, GrepTool, BashTool, TreeTool, DefinitionsTool,
+)
 
 console = Console()
 
@@ -96,10 +100,29 @@ PROVIDERS: list[ProviderOption] = [
         env_key="OPENAI_API_KEY",
         base_url="https://api.openai.com/v1",
         models=[
-            ModelOption("gpt-4o",         "GPT-4o          128K ctx · 最强综合"),
+            ModelOption("gpt-4.1-2025-04-14", "GPT-4.1         1M ctx · 最新最强"),
+            ModelOption("gpt-4.1-mini-2025-04-14", "GPT-4.1 Mini    1M ctx · 快速省钱"),
+            ModelOption("gpt-4.1-nano-2025-04-14", "GPT-4.1 Nano    1M ctx · 极速超省"),
+            ModelOption("gpt-4o",         "GPT-4o          128K ctx · 综合能力"),
             ModelOption("gpt-4o-mini",    "GPT-4o Mini     128K ctx · 快速省钱"),
             ModelOption("o3-mini",        "o3-mini         200K ctx · 推理模型"),
-            ModelOption("o1",             "o1              200K ctx · 高级推理"),
+        ],
+    ),
+    ProviderOption(
+        id="getgoapi", name="GetGoAPI (多模型代理)", key_hint="sk-...",
+        env_key="GETGOAPI_API_KEY",
+        base_url="https://api.getgoapi.com/v1",
+        models=[
+            ModelOption("gpt-4.1-2025-04-14", "GPT-4.1         最新最强综合"),
+            ModelOption("gpt-4.1-mini-2025-04-14", "GPT-4.1 Mini    快速省钱"),
+            ModelOption("gpt-4.1-nano-2025-04-14", "GPT-4.1 Nano    极速超省"),
+            ModelOption("gpt-4o",         "GPT-4o          综合能力"),
+            ModelOption("gpt-4o-mini",    "GPT-4o Mini     快速省钱"),
+            ModelOption("o3-mini",        "o3-mini         推理模型"),
+            ModelOption("claude-sonnet-4-6", "Claude Sonnet 4.6  最强综合"),
+            ModelOption("claude-haiku-4-5",  "Claude Haiku 4.5   快速省钱"),
+            ModelOption("deepseek-chat",  "DeepSeek Chat   通用对话"),
+            ModelOption("deepseek-reasoner", "DeepSeek Reasoner 推理模型"),
         ],
     ),
     ProviderOption(
@@ -156,10 +179,7 @@ class AgentConfig:
     provider_name: str
 
 async def setup_wizard(pt: PromptSession) -> AgentConfig:
-    """
-    交互式配置向导：选 Provider → 选模型 → 输入 Key。
-    返回 AgentConfig，失败时抛出 KeyboardInterrupt。
-    """
+    """交互式配置向导：选 Provider → 选模型 → 输入 Key。"""
     console.print()
     console.print(Rule("  配置模型", style=C_BRAND))
     console.print()
@@ -194,7 +214,6 @@ async def setup_wizard(pt: PromptSession) -> AgentConfig:
 
     # ── 第二步：选模型 ────────────────────────────────────────────────────────
     if provider.id == "custom":
-        # 自定义：手动输入 base_url 和 model
         try:
             base_url = (await pt.prompt_async("  Base URL (如 http://localhost:11434/v1) › ")).strip()
             model    = (await pt.prompt_async("  Model 名称 › ")).strip()
@@ -233,7 +252,6 @@ async def setup_wizard(pt: PromptSession) -> AgentConfig:
         api_key = "ollama"
         console.print(f"  [dim]本地模型无需 API Key，使用默认占位符[/]\n")
     else:
-        # 优先使用环境变量中已有的 key
         env_val = os.environ.get(provider.env_key or "", "") if provider.env_key else ""
         if env_val:
             masked = env_val[:8] + "..." + env_val[-4:]
@@ -272,7 +290,6 @@ async def setup_wizard(pt: PromptSession) -> AgentConfig:
 
 async def _prompt_key(pt: PromptSession, hint: str) -> str:
     """带密码掩码的 API Key 输入。"""
-    from prompt_toolkit.formatted_text import HTML
     while True:
         try:
             key = await pt.prompt_async("  API Key › ")
@@ -370,20 +387,18 @@ def render_status(agent: Agent) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 流式输出
+# Agent 响应
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def agent_response(agent: Agent, message: str) -> str:
     """
     执行一次完整的 Agent 响应：工具调用过程实时展示，最终答案 Markdown 渲染。
-    使用 agent.chat() 以支持完整的工具调用循环。
     """
-    tool_log: list[str] = []       # 记录工具调用历史，用于刷新 Live
+    tool_log: list[str] = []
 
     def _tool_panel() -> Panel:
-        """构建工具调用日志面板。"""
         lines = Text()
-        for entry in tool_log[-12:]:          # 最多展示最近 12 条
+        for entry in tool_log[-15:]:
             lines.append(entry + "\n")
         return Panel(
             lines,
@@ -394,14 +409,17 @@ async def agent_response(agent: Agent, message: str) -> str:
         )
 
     def on_tool_call(name: str, arguments: dict) -> None:
-        # 把关键参数提炼成一行摘要
         arg_hint = ""
         for key in ("path", "file_path", "pattern", "command", "query"):
             if key in arguments:
                 val = str(arguments[key])
                 arg_hint = f"  [dim]{val[:60]}{'…' if len(val)>60 else ''}[/]"
                 break
-        tool_log.append(f"  [cyan]⚙ {name}[/]{arg_hint}")
+        # Mark write/edit tools specially
+        if name in ("write_file", "edit_file"):
+            tool_log.append(f"  [bold yellow]✎ {name}[/]{arg_hint}")
+        else:
+            tool_log.append(f"  [cyan]⚙ {name}[/]{arg_hint}")
 
     def on_tool_result(name: str, output: str, is_error: bool) -> None:
         preview = output.strip().splitlines()
@@ -418,7 +436,7 @@ async def agent_response(agent: Agent, message: str) -> str:
             console=console,
             refresh_per_second=8,
             vertical_overflow="ellipsis",
-            transient=True,          # 完成后清除，换成最终答案面板
+            transient=True,
         ) as live:
             tool_log.append("  [dim]正在思考…[/]")
 
@@ -432,7 +450,7 @@ async def agent_response(agent: Agent, message: str) -> str:
 
             await _chat_with_refresh()
     else:
-        # 无工具时走流式输出（体验更好）
+        # 无工具时走流式输出
         collected: list[str] = []
         panel_title = Text("  Lumen  ●  streaming…", style=C_AGENT)
         with Live(
@@ -472,15 +490,9 @@ async def agent_response(agent: Agent, message: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def handle_mode(agent: Agent, arg: str) -> None:
-    """
-    /mode          — 显示当前模式
-    /mode code     — 开启代码深读模式
-    /mode general  — 切回通用模式
-    """
     arg = arg.strip().lower()
 
     if not arg:
-        # 显示当前状态
         mode = "代码深读模式  [Code Reading Mode]" if agent.code_reading_mode else "通用模式  [General]"
         console.print(Panel(
             f"  当前模式: [bold cyan]{mode}[/]\n\n"
@@ -579,11 +591,31 @@ async def handle_load(
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
-    """
-    运行聊天主循环。
-    返回 True 表示用户想重新配置（/config），False 表示退出。
-    """
-    # 创建 Agent（注册全套代码阅读工具）
+    """运行聊天主循环。返回 True 表示重新配置，False 表示退出。"""
+
+    # ── Permission system: ask user for write/risky operations ────────────
+    async def ask_permission(tool_name: str, tool_input: dict) -> bool:
+        """Interactive permission prompt for write/risky tools."""
+        arg_hint = ""
+        for key in ("file_path", "command", "pattern"):
+            if key in tool_input:
+                val = str(tool_input[key])
+                arg_hint = f"  {val[:80]}{'…' if len(val)>80 else ''}"
+                break
+
+        console.print()
+        console.print(Panel(
+            f"  工具: [bold yellow]{tool_name}[/]\n{arg_hint}",
+            title="🔒 需要确认", title_align="left", border_style="yellow",
+        ))
+        try:
+            answer = await pt.prompt_async("  允许执行? [Y/n] › ")
+            return answer.strip().lower() in ("", "y", "yes")
+        except (KeyboardInterrupt, EOFError):
+            return False
+
+    permission_checker = PermissionChecker(ask_fn=ask_permission)
+
     try:
         agent = Agent(
             api_key=config.api_key,
@@ -592,10 +624,15 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
             inject_git_state=True,
             inject_memory=True,
             auto_compact=True,
+            permission_checker=permission_checker,
+            retry_config=RetryConfig(max_retries=10, fallback_model=None),
+            enable_file_cache=True,
             tools=[
                 TreeTool(),         # 项目目录结构树
                 DefinitionsTool(),  # 提取文件中所有类/函数定义
                 FileReadTool(),     # 按行读取文件内容
+                FileWriteTool(),    # 创建/覆写文件
+                FileEditTool(),     # 精确查找替换编辑
                 GlobTool(),         # 按模式匹配文件路径
                 GrepTool(),         # 搜索文件内容
                 BashTool(),         # 执行 shell 命令
@@ -603,7 +640,7 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
         )
     except Exception as e:
         render_error(f"Agent 创建失败: {e}")
-        return True  # 回到配置向导
+        return True
 
     # 启动信息
     info = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
@@ -615,7 +652,11 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
     info.add_row("Auto-compact",   "✓ 开启")
     info.add_row("Git state",      "✓ 注入")
     info.add_row("Memory files",   "✓ ENGRAM.md 自动发现")
-    info.add_row("Tools",          "✓ tree · definitions · read_file · glob · grep · bash")
+    info.add_row("Tools (读)",     "✓ tree · definitions · read_file · glob · grep")
+    info.add_row("Tools (写)",     "[yellow]✎[/] write_file · edit_file · bash")
+    info.add_row("权限系统",       "✓ 读操作静默放行 · 写操作需确认 · 危险命令拒绝")
+    info.add_row("重试/降级",      "✓ 指数退避 · 429/529重试 · max_tokens自动缩减")
+    info.add_row("文件缓存",       "✓ LRU 100文件/25MB")
     console.print(Panel(info, border_style=C_DIM, title="✓ 准备就绪", title_align="left"))
     console.print(Rule(style=C_DIM))
     console.print(
@@ -676,7 +717,7 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
 
         elif cmd == "/config":
             render_system("返回配置向导…", C_DIM)
-            return True   # 信号：重新配置
+            return True
 
         elif cmd.startswith("/"):
             render_system(f"未知命令: {user_input}  输入 /help 查看帮助", C_WARN)
@@ -687,9 +728,11 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
         console.print()
 
         try:
+            agent.reset_abort()  # Clear any previous abort state
             await agent_response(agent, user_input)
             console.print()
         except KeyboardInterrupt:
+            agent.abort("User pressed Ctrl+C")
             if _last_ctrl_c:
                 console.print()
                 render_system("Goodbye!", C_DIM)
@@ -698,7 +741,7 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
             render_system("已取消。（再按一次 Ctrl+C 退出）", C_WARN)
         except Exception as e:
             render_error(str(e))
-            if os.environ.get("ENGRAM_DEBUG"):
+            if os.environ.get("LUMEN_DEBUG"):
                 traceback.print_exc()
 
 
@@ -713,8 +756,8 @@ async def main_async(
 ) -> None:
     # Banner
     console.print(Text(BANNER, style=C_BRAND), justify="center")
-    console.print(Align.center(Text("Model-agnostic Deep Code Reading Agent", style=C_DIM)))
-    console.print(Align.center(Text("用任意大模型深度阅读和理解代码", style="dim cyan")))
+    console.print(Align.center(Text("Model-agnostic Coding Agent", style=C_DIM)))
+    console.print(Align.center(Text("用任意大模型读写和理解代码", style="dim cyan")))
     console.print()
 
     pt = PromptSession(
@@ -738,7 +781,6 @@ async def main_async(
 
     while True:
         try:
-            # 尝试从环境变量中自动填充（仍然走向导让用户确认）
             config = await setup_wizard(pt)
         except (KeyboardInterrupt, EOFError):
             console.print()
@@ -755,7 +797,7 @@ async def main_async(
 
 def main() -> None:
     import argparse
-    parser = argparse.ArgumentParser(description="Lumen — 代码深度阅读 Agent")
+    parser = argparse.ArgumentParser(description="Lumen — 代码读写 Agent")
     parser.add_argument("--model",    default=None, help="模型名称，例如 gpt-4o")
     parser.add_argument("--api-key",  default=None, help="API Key（覆盖环境变量）")
     parser.add_argument("--base-url", default=None, help="API Base URL")

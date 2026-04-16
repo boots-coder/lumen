@@ -6,7 +6,7 @@ Works with any API that speaks the OpenAI chat completions protocol:
   - Azure OpenAI
   - Together AI, Fireworks, Groq, Perplexity
   - Local via LM Studio, Ollama (openai-compat mode), vLLM
-  - DeepSeek, Mistral, etc.
+  - DeepSeek, Mistral, GetGoAPI, etc.
 
 Covers roughly 90% of LLM APIs in the wild.
 """
@@ -42,9 +42,6 @@ class OpenAICompatProvider(BaseProvider):
         }
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
-        # Populated after each stream() call with real API token counts.
-        # (0, 0) means not yet available or API didn't return usage.
-        self.last_stream_usage: tuple[int, int] = (0, 0)  # (prompt, completion)
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -63,8 +60,6 @@ class OpenAICompatProvider(BaseProvider):
     ) -> dict[str, Any]:
         reasoning = self._is_reasoning_model()
 
-        # o1 uses "developer" role for system instructions;
-        # o3 and later accept "system" again.
         system_role = "developer" if self.model.lower().startswith("o1") else "system"
 
         full_messages: list[dict[str, Any]] = []
@@ -78,10 +73,8 @@ class OpenAICompatProvider(BaseProvider):
             "stream": stream,
         }
 
-        # Reasoning models use max_completion_tokens and reject temperature
         if reasoning:
             payload["max_completion_tokens"] = max_tokens
-            # temperature intentionally omitted — these models don't support it
         else:
             payload["max_tokens"] = max_tokens
             payload["temperature"] = temperature
@@ -129,11 +122,21 @@ class OpenAICompatProvider(BaseProvider):
         if "tool_calls" in message and message["tool_calls"]:
             tool_calls = []
             for tc in message["tool_calls"]:
+                # Parse arguments — may be string or dict
+                args_raw = tc["function"]["arguments"]
+                if isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw)
+                    except json.JSONDecodeError:
+                        args = {"raw": args_raw}
+                else:
+                    args = args_raw
+
                 tool_calls.append(
                     ToolCall(
                         id=tc["id"],
                         name=tc["function"]["name"],
-                        arguments=json.loads(tc["function"]["arguments"]),
+                        arguments=args,
                     )
                 )
 

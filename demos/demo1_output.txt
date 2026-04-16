@@ -1,0 +1,29 @@
+============================================================
+  Demo 1: Agent 自主阅读代码库
+============================================================
+  🔧 tree  lumen/lumen/services
+  🔧 tree  lumen/services
+  🔧 read_file  lumen/services/abort.py
+  🔧 read_file  lumen/services/errors.py
+  🔧 read_file  lumen/services/hooks.py
+  🔧 read_file  lumen/services/permissions.py
+  🔧 read_file  lumen/services/retry.py
+  🔧 read_file  lumen/services/tool_executor.py
+
+────────────────────────────────────────────────────────────
+📋 工具调用链: tree(lumen/lumen/services) → tree(lumen/services) → read_file(lumen/services/abort.py) → read_file(lumen/services/errors.py) → read_file(lumen/services/hooks.py) → read_file(lumen/services/permissions.py) → read_file(lumen/services/retry.py) → read_file(lumen/services/tool_executor.py)
+📊 Token: 7651
+────────────────────────────────────────────────────────────
+lumen/services/ 目录下有以下模块及其核心功能：
+
+1. abort.py：基于 asyncio 的取消控制器，支持父子级中断信号传播，子级取消不影响父级，支持弱引用式清理和兄弟工具错误中断。
+
+2. errors.py：API 错误分类，定义12种错误类型及其处理策略，支持重试、回退、终止等不同动作的推荐。
+
+3. hooks.py：生命周期钩子管理，支持工具执行前后钩子，可阻塞、修改输入输出或提供补救上下文，钩子可全局或针对单工具注册。
+
+4. permissions.py：基于规则的权限系统，管理工具执行安全，读操作自动允许，写操作需确认，危险命令直接拒绝，支持路径和命令匹配及断路器。
+
+5. retry.py：API请求的重试处理器，支持指数退避加抖动，处理服务器过载回退，自动缩减请求大小，支持429限流和最大重试次数配置。
+
+6. tool_executor.py：并发工具执行器，读操作并行（最多10个），写操作串行，按原序返回结果，支持基于 asyncio.Event 的中断传播。

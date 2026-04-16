@@ -2,12 +2,10 @@
 Session — the heart of Lumen's context management.
 
 Tracks the full message history, running token counts, and compaction state.
-Manages the message queue and
-compaction state bookkeeping.
 
 Key design decisions:
   - Token counts are tracked per-message and as a running total
-  - Compaction boundary is a special system message inserted in-place
+  - Tool call messages use proper role formats (role=tool for OpenAI, user+tool_result for Anthropic)
   - Sessions are serialisable to JSON for persistence across processes
 """
 
@@ -20,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .._types import Message, Role, TokenUsage
+from .._types import Message, Role, TokenUsage, ToolCall
 from ..tokens.counter import count_tokens, count_messages_tokens
 
 logger = logging.getLogger(__name__)
@@ -63,6 +61,54 @@ class Session:
         self.token_usage.total += tokens
         return msg
 
+    def add_assistant_with_tool_calls(
+        self,
+        content: str | None,
+        tool_calls: list[ToolCall],
+        completion_tokens: int = 0,
+    ) -> Message:
+        """Add an assistant message that includes tool calls."""
+        text = content or ""
+        tokens = completion_tokens or count_tokens(text, self.model) + 50 * len(tool_calls)
+        msg = Message(
+            role=Role.ASSISTANT,
+            content=text,
+            token_count=tokens,
+            tool_calls=tool_calls,
+        )
+        self.messages.append(msg)
+        self.token_usage.completion = tokens
+        self.token_usage.total += tokens
+        return msg
+
+    def add_tool_result(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        content: str,
+        is_error: bool = False,
+    ) -> Message:
+        """
+        Add a tool result message.
+
+        Uses Role.TOOL with tool_call_id — providers convert to the right
+        wire format (OpenAI: role=tool, Anthropic: role=user + tool_result block).
+        """
+        if is_error:
+            content = f"Error: {content}"
+
+        tokens = count_tokens(content, self.model)
+        msg = Message(
+            role=Role.TOOL,
+            content=content,
+            token_count=tokens,
+            tool_call_id=tool_use_id,
+            tool_name=tool_name,
+        )
+        self.messages.append(msg)
+        self.token_usage.total += tokens
+        return msg
+
     def add_compact_summary(self, summary: str) -> Message:
         """Insert a compaction boundary message."""
         tokens = count_tokens(summary, self.model)
@@ -71,29 +117,6 @@ class Session:
             content=summary,
             token_count=tokens,
             is_compact_summary=True,
-        )
-        self.messages.append(msg)
-        self.token_usage.total += tokens
-        return msg
-
-    def add_tool_result(self, tool_use_id: str, content: str, is_error: bool = False) -> Message:
-        """
-        Add a tool result message to the session.
-
-        Tool results are formatted as user messages with special formatting
-        to indicate they are tool outputs.
-        """
-        # Format tool result for clarity
-        if is_error:
-            formatted_content = f"<tool_result tool_use_id='{tool_use_id}' is_error='true'>\n{content}\n</tool_result>"
-        else:
-            formatted_content = f"<tool_result tool_use_id='{tool_use_id}'>\n{content}\n</tool_result>"
-
-        tokens = count_tokens(formatted_content, self.model)
-        msg = Message(
-            role=Role.USER,
-            content=formatted_content,
-            token_count=tokens,
         )
         self.messages.append(msg)
         self.token_usage.total += tokens
@@ -113,16 +136,45 @@ class Session:
         completion_tokens: int,
         context_window: int,
     ) -> None:
-        """
-        Update token counts using real numbers from the API response.
-
-        This is the authoritative update — replaces estimates.
-        Uses real API response numbers (authoritative update).
-        """
+        """Update token counts using real numbers from the API response."""
         self.token_usage.prompt = prompt_tokens
         self.token_usage.completion = completion_tokens
         self.token_usage.total = prompt_tokens + completion_tokens
         self.token_usage.context_window = context_window
+
+    # ── message format conversion ────────────────────────────────────────────
+
+    def as_openai_messages(self) -> list[dict[str, Any]]:
+        """Return messages in OpenAI-compatible format."""
+        return [m.to_openai_dict() for m in self.messages]
+
+    def as_anthropic_messages(self) -> list[dict[str, Any]]:
+        """Return messages in Anthropic Messages API format."""
+        messages = []
+        for m in self.messages:
+            d = m.to_anthropic_dict()
+            # Anthropic requires alternating user/assistant roles.
+            # Merge consecutive same-role messages.
+            if messages and messages[-1]["role"] == d["role"]:
+                prev = messages[-1]
+                # Merge content
+                if isinstance(prev["content"], list) and isinstance(d["content"], list):
+                    prev["content"].extend(d["content"])
+                elif isinstance(prev["content"], list):
+                    prev["content"].append({"type": "text", "text": d["content"]})
+                elif isinstance(d["content"], list):
+                    prev["content"] = [{"type": "text", "text": prev["content"]}] + d["content"]
+                else:
+                    prev["content"] = prev["content"] + "\n\n" + d["content"]
+            else:
+                messages.append(d)
+        return messages
+
+    def as_api_messages(self, provider_type: str = "openai") -> list[dict[str, Any]]:
+        """Return messages formatted for the given provider type."""
+        if provider_type == "anthropic":
+            return self.as_anthropic_messages()
+        return self.as_openai_messages()
 
     # ── serialisation ─────────────────────────────────────────────────────────
 
@@ -146,6 +198,13 @@ class Session:
                     "token_count": m.token_count,
                     "created_at": m.created_at.isoformat(),
                     "is_compact_summary": m.is_compact_summary,
+                    "tool_call_id": m.tool_call_id,
+                    "tool_name": m.tool_name,
+                    "tool_calls": (
+                        [{"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                         for tc in m.tool_calls]
+                        if m.tool_calls else None
+                    ),
                 }
                 for m in self.messages
             ],
@@ -184,17 +243,9 @@ class Session:
 
     # ── convenience ───────────────────────────────────────────────────────────
 
-    def as_api_messages(self) -> list[dict[str, Any]]:
-        """Return messages as plain dicts ready for the API."""
-        return [m.to_dict() for m in self.messages]
-
     def recalculate_tokens(self, system: str) -> int:
-        """
-        Re-count tokens for the full context (system + messages).
-
-        Used after compaction to get an accurate baseline.
-        """
-        all_msgs = [{"role": "system", "content": system}] + self.as_api_messages()
+        """Re-count tokens for the full context (system + messages)."""
+        all_msgs = [{"role": "system", "content": system}] + self.as_openai_messages()
         total = count_messages_tokens(all_msgs, self.model)
         self.token_usage.total = total
         self.token_usage.prompt = total

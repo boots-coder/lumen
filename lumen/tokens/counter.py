@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 # Users can always override via Agent(context_window=N).
 KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
     # OpenAI
+    "gpt-4.1-2025-04-14": 1_047_576,
+    "gpt-4.1-mini-2025-04-14": 1_047_576,
+    "gpt-4.1-nano-2025-04-14": 1_047_576,
+    "gpt-4.1": 1_047_576,
+    "gpt-4.1-mini": 1_047_576,
+    "gpt-4.1-nano": 1_047_576,
     "gpt-4o": 128_000,
     "gpt-4o-mini": 128_000,
     "gpt-4-turbo": 128_000,
@@ -59,6 +65,12 @@ KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
 
 # Known max output tokens per model
 KNOWN_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "gpt-4.1-2025-04-14": 32_768,
+    "gpt-4.1-mini-2025-04-14": 32_768,
+    "gpt-4.1-nano-2025-04-14": 32_768,
+    "gpt-4.1": 32_768,
+    "gpt-4.1-mini": 32_768,
+    "gpt-4.1-nano": 32_768,
     "gpt-4o": 16_384,
     "gpt-4o-mini": 16_384,
     "gpt-4-turbo": 4_096,

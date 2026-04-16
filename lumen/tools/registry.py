@@ -15,6 +15,7 @@ class ToolRegistry:
     Registry for managing tools available to the agent.
 
     Handles tool registration, lookup, and schema conversion.
+    Supports dynamic format adaptation via ModelProfile.
     """
 
     def __init__(self):
@@ -42,6 +43,32 @@ class ToolRegistry:
     def to_anthropic_tools(self) -> list[dict[str, Any]]:
         """Convert all tools to Anthropic tool use format."""
         return [tool.to_anthropic_schema() for tool in self._tools.values()]
+
+    def to_tools_for_profile(self, profile: Any) -> list[dict[str, Any]]:
+        """
+        Convert all tools to the format required by a model profile.
+
+        This is the preferred method — it auto-adapts based on the model's
+        pretrained tool format, so every model gets its optimal schema.
+
+        Args:
+            profile: A ModelProfile from providers.model_profiles
+        """
+        from ..providers.model_profiles import convert_tool_schema
+
+        results = []
+        for tool in self._tools.values():
+            # Build universal tool definition
+            schema = tool.input_schema.model_json_schema()
+            schema.pop("$defs", None)
+            universal = {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": schema,
+            }
+            # Convert to model-specific format
+            results.append(convert_tool_schema(universal, profile))
+        return results
 
     def __len__(self) -> int:
         return len(self._tools)
