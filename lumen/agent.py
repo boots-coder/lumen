@@ -62,6 +62,7 @@ from .services.structured_output import (
     OutputFormat, StructuredOutputConfig, StructuredResult,
     prepare_structured_request, validate_output,
 )
+from .services.review_state import ReviewState, ReviewPhase
 from .services.subagent import SubAgentManager
 from .services.tool_executor import (
     ToolExecutor, ToolExecRequest, ToolExecResult, ToolStatus,
@@ -161,7 +162,7 @@ class Agent:
         session: Session | None = None,
         tools: list[Tool] | None = None,
         max_tool_calls: int = 20,
-        code_reading_mode: bool = False,
+        review_mode: bool = False,
         # ── New production features ──────────────────────────────
         permission_checker: PermissionChecker | None = None,
         hooks: HookRegistry | None = None,
@@ -219,7 +220,7 @@ class Agent:
             cwd=self._cwd,
             inject_git_state=inject_git_state,
             inject_memory=inject_memory,
-            code_reading_mode=code_reading_mode,
+            review_mode=review_mode,
         )
 
         # Session (restore or create fresh)
@@ -283,6 +284,10 @@ class Agent:
 
         # Sub-agent manager (not auto-registered — call enable_subagents())
         self._subagent_manager = SubAgentManager(self)
+
+        # Review Mode state machine + approval tool (lazy-registered)
+        self._review_state = ReviewState()
+        self._approval_tool_registered = False
 
         # Tool executor (concurrent read, serial write)
         self._tool_executor = ToolExecutor(
@@ -357,8 +362,20 @@ class Agent:
                 self._session.add_user(context_reminder)
             self._context_injected = True
 
+        # Review Mode: auto-start state machine on new task
+        if self._prompt_builder.review_mode:
+            if self._review_state.phase in (ReviewPhase.IDLE, ReviewPhase.COMPLETE):
+                self._review_state.start(task_summary=message[:200])
+
+        # Prepend review-state system-reminder to user message (ephemeral per-turn)
+        effective_message = message
+        if self._prompt_builder.review_mode:
+            state_reminder = self._review_state.as_system_reminder()
+            if state_reminder:
+                effective_message = f"{state_reminder}\n\n{message}"
+
         # Add user message to session
-        user_msg = self._session.add_user(message)
+        user_msg = self._session.add_user(effective_message)
 
         # Auto-save: append user message to transcript
         if self._transcript:
@@ -568,6 +585,7 @@ class Agent:
         self._context_injected = False
         self._prompt_builder.invalidate()
         self._abort.reset()
+        self._review_state.reset()
         if self._file_cache:
             self._file_cache.clear()
         # Cleanup sub-agents on reset
@@ -653,15 +671,56 @@ class Agent:
 
     # ── Mode switching ────────────────────────────────────────────────────────
 
-    def enable_code_reading_mode(self) -> None:
-        self._prompt_builder.enable_code_reading_mode()
+    def enable_review_mode(
+        self,
+        handler: Any = None,
+        auto_register_tool: bool = True,
+    ) -> None:
+        """
+        Activate Review Mode. On first call (or when handler changes),
+        registers the `request_approval` tool so the model can gate phases.
 
-    def disable_code_reading_mode(self) -> None:
-        self._prompt_builder.disable_code_reading_mode()
+        Parameters
+        ----------
+        handler : ApprovalHandler | None
+            Custom approval handler. If None, uses ConsoleApprovalHandler.
+        auto_register_tool : bool
+            If False, does not register the approval tool (user is responsible).
+        """
+        self._prompt_builder.enable_review_mode()
+        self._review_state.reset()  # fresh state for new review session
+
+        if not auto_register_tool:
+            return
+
+        from .tools.approval import RequestApprovalTool, ConsoleApprovalHandler
+        effective_handler = handler or ConsoleApprovalHandler()
+
+        if self._approval_tool_registered:
+            # Update handler on existing tool instance
+            existing = self._tool_registry.get("request_approval")
+            if existing is not None:
+                existing._handler = effective_handler
+        else:
+            tool = RequestApprovalTool(effective_handler)
+            self._tool_registry.register(tool)
+            self._approval_tool_registered = True
+
+    def disable_review_mode(self) -> None:
+        self._prompt_builder.disable_review_mode()
+        self._review_state.reset()
+        # Unregister the approval tool — prevents accidental calls in general mode
+        if self._approval_tool_registered:
+            self._tool_registry.unregister("request_approval")
+            self._approval_tool_registered = False
 
     @property
-    def code_reading_mode(self) -> bool:
-        return self._prompt_builder.code_reading_mode
+    def review_mode(self) -> bool:
+        return self._prompt_builder.review_mode
+
+    @property
+    def review_state(self) -> ReviewState:
+        return self._review_state
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -905,6 +964,11 @@ class Agent:
             if self._transcript:
                 self._transcript.append_message(tool_msg)
 
+            # Review Mode: update ReviewState based on approval tool result
+            if result.tool_name == "request_approval":
+                args = self._get_tool_arguments(result.tool_call_id, requests)
+                self._handle_approval_result(args, output)
+
             await _fire(on_tool_result, result.tool_name, output, result.is_error)
 
     async def _execute_single_tool(
@@ -918,6 +982,30 @@ class Agent:
 
         input_model = tool.input_schema(**arguments)
         return await tool.execute(input_model)
+
+    def _handle_approval_result(self, args: dict[str, Any], output: str) -> None:
+        """Parse request_approval tool output and advance ReviewState."""
+        if not self._review_state.is_active:
+            return
+
+        approved = output.startswith("APPROVED")
+        skip_remaining = "SKIP" in output.upper() and approved
+        phase_arg = args.get("phase", "")
+
+        if not approved:
+            self._review_state.reject_current()
+            return
+
+        # phase=impl → record this function; never auto-advance to COMPLETE
+        if phase_arg == "impl" or self._review_state.phase == ReviewPhase.IMPL:
+            fn_name = args.get("title", "") or "<unnamed>"
+            self._review_state.record_function(fn_name)
+            if skip_remaining:
+                self._review_state.skip_impl = True
+            return
+
+        # design / pipeline → advance phase
+        self._review_state.approve_current(skip_remaining=skip_remaining)
 
     def _get_tool_arguments(
         self, tool_call_id: str, requests: list[ToolExecRequest],

@@ -34,10 +34,12 @@ from .services.persistent_retry import (
     PersistentRetryConfig, PersistentRetryManager, PersistentRetryResult, RetryLogEntry,
 )
 from .services.subagent import SubAgentManager, SubAgentConfig, SubAgentResult
+from .services.review_state import ReviewState, ReviewPhase
 
 # Context
 from .context.session_memory import SessionMemoryManager, MemoryCategory, MemoryEntry
 from .context.transcript import TranscriptWriter, TranscriptReader, SessionInfo
+from .context.modes import Mode, ModeStack, REVIEW_MODE, build_default_stack
 
 # Utils
 from .utils.file_state_cache import FileStateCache
@@ -103,8 +105,16 @@ __all__ = [
     "SubAgentManager",
     "SubAgentConfig",
     "SubAgentResult",
+    # Review Mode (state machine)
+    "ReviewState",
+    "ReviewPhase",
+    # Modes (composable system-prompt layers)
+    "Mode",
+    "ModeStack",
+    "REVIEW_MODE",
+    "build_default_stack",
     # Utils
     "FileStateCache",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

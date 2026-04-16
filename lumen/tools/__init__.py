@@ -14,6 +14,10 @@ from .web_search import WebSearchTool
 from .web_fetch import WebFetchTool
 from .lsp import LSPTool
 from .subagent_tool import SubAgentTool
+from .approval import (
+    RequestApprovalTool, ConsoleApprovalHandler,
+    ApprovalHandler, ApprovalPhase, ApprovalResponse,
+)
 
 __all__ = [
     "Tool",
@@ -31,4 +35,9 @@ __all__ = [
     "WebFetchTool",
     "LSPTool",
     "SubAgentTool",
+    "RequestApprovalTool",
+    "ConsoleApprovalHandler",
+    "ApprovalHandler",
+    "ApprovalPhase",
+    "ApprovalResponse",
 ]

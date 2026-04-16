@@ -1,0 +1,39 @@
+body {
+    font-family: Arial, sans-serif;
+    text-align: center;
+    background: #f8f8f8;
+}
+#game {
+    display: inline-block;
+    margin: 20px auto;
+}
+.row {
+    height: 32px;
+}
+.cell {
+    width: 32px;
+    height: 32px;
+    display: inline-block;
+    vertical-align: top;
+    font-size: 28px;
+    line-height: 32px;
+}
+.wall {
+    background: #555;
+    color: #333;
+}
+.floor {
+    background: #fff;
+}
+.box {
+    background: #f8c471;
+}
+.target {
+    background: #aed6f1;
+}
+.player {
+    background: #82e0aa;
+}
+.box-on-target {
+    background: #58d68d;
+}

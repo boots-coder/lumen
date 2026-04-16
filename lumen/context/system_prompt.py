@@ -39,6 +39,7 @@ from typing import Optional
 
 from .git_state import get_git_state
 from .memory import build_memory_prompt, discover_memory_files
+from .modes import ModeStack, build_default_stack
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -151,27 +152,6 @@ _BASE_PROMPT = _build_base_prompt()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CODE READING MODE  —  additive layer
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_CODE_READING_MODE = """\
-# Code Reading Mode  [ACTIVE]
-
-You are now also a **deep code reading specialist**.
-
-When explaining code, cover:
-1. **WHAT** — behavior, inputs, outputs
-2. **HOW** — algorithm, data structures, patterns
-3. **WHY** — trade-offs, constraints, design decisions
-4. **WHERE** — callers, dependencies, call chain
-
-Always cite `file_path:line_number`. Follow call chains proactively. \
-Never guess — always read actual code with tools first.
-
-Workflow: `tree` → `glob`/`grep` → `definitions` → `read_file` → explain."""
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT — lightweight, injected as user <system-reminder> messages
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -256,13 +236,15 @@ class SystemPromptBuilder:
         inject_git_state: bool = True,
         inject_memory: bool = True,
         inject_project_scan: bool = False,  # DISABLED by default now
-        code_reading_mode: bool = False,
+        review_mode: bool = False,
     ) -> None:
         self._extra = extra_instructions.strip()
         self._cwd = (cwd or Path.cwd()).resolve()
         self._inject_git = inject_git_state
         self._inject_memory = inject_memory
-        self._code_reading_mode = code_reading_mode
+        self._modes: ModeStack = build_default_stack()
+        if review_mode:
+            self._modes.activate("review")
         # Cached values
         self._cached_system: str | None = None
         self._cached_context: str | None = None
@@ -275,8 +257,9 @@ class SystemPromptBuilder:
 
         parts: list[str] = [_BASE_PROMPT]
 
-        if self._code_reading_mode:
-            parts.append(_CODE_READING_MODE)
+        mode_prompt = self._modes.build_prompt()
+        if mode_prompt:
+            parts.append(mode_prompt)
 
         if self._extra:
             parts.append(self._extra)
@@ -300,19 +283,23 @@ class SystemPromptBuilder:
         self._context_built = True
         return self._cached_context
 
-    def enable_code_reading_mode(self) -> None:
-        if not self._code_reading_mode:
-            self._code_reading_mode = True
+    def enable_review_mode(self) -> None:
+        if not self._modes.is_active("review"):
+            self._modes.activate("review")
             self._cached_system = None
 
-    def disable_code_reading_mode(self) -> None:
-        if self._code_reading_mode:
-            self._code_reading_mode = False
+    def disable_review_mode(self) -> None:
+        if self._modes.deactivate("review"):
             self._cached_system = None
 
     @property
-    def code_reading_mode(self) -> bool:
-        return self._code_reading_mode
+    def review_mode(self) -> bool:
+        return self._modes.is_active("review")
+
+    @property
+    def modes(self) -> ModeStack:
+        """Direct access to the ModeStack for advanced usage."""
+        return self._modes
 
     def invalidate(self) -> None:
         self._cached_system = None

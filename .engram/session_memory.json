@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "turn_count": 1,
+  "entries": [
+    {
+      "content": "The user requested to create a web-based Sokoban game in the /Users/bootscoder/Desktop/project-code-agent/lumen/examples directory.",
+      "category": "project",
+      "timestamp": "2026-04-16T16:33:14.227214",
+      "source_turn": 1,
+      "relevance_score": 0.9
+    },
+    {
+      "content": "The assistant suggested structuring the web-based Sokoban game with three files: sokoban.html for structure, sokoban.css for styles, and sokoban.js for logic.",
+      "category": "project",
+      "timestamp": "2026-04-16T16:33:14.227240",
+      "source_turn": 1,
+      "relevance_score": 0.8
+    },
+    {
+      "content": "The suggested file structure for the Sokoban game is to place sokoban.html, sokoban.css, and sokoban.js under the examples/ directory.",
+      "category": "reference",
+      "timestamp": "2026-04-16T16:33:14.227264",
+      "source_turn": 1,
+      "relevance_score": 0.7
+    }
+  ]
+}

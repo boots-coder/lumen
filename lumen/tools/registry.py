@@ -32,6 +32,14 @@ class ToolRegistry:
         """Get a tool by name."""
         return self._tools.get(name)
 
+    def unregister(self, name: str) -> bool:
+        """Unregister a tool by name. Returns True if it was present."""
+        if name in self._tools:
+            del self._tools[name]
+            logger.debug(f"Unregistered tool: {name}")
+            return True
+        return False
+
     def list_tools(self) -> list[str]:
         """List all registered tool names."""
         return list(self._tools.keys())
