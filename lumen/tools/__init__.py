@@ -10,6 +10,9 @@ from .grep import GrepTool
 from .bash import BashTool
 from .tree import TreeTool
 from .definitions import DefinitionsTool
+from .web_search import WebSearchTool
+from .web_fetch import WebFetchTool
+from .lsp import LSPTool
 
 __all__ = [
     "Tool",
@@ -23,4 +26,7 @@ __all__ = [
     "BashTool",
     "TreeTool",
     "DefinitionsTool",
+    "WebSearchTool",
+    "WebFetchTool",
+    "LSPTool",
 ]

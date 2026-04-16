@@ -142,12 +142,14 @@ class DenialTracker:
 
 class PermissionChecker:
     """
-    Rule-based permission system.
+    Rule-based permission system with optional ML command classification.
 
     Check order:
       1. Custom rules (user-defined, highest priority)
       2. Built-in tool classification (read=allow, write=ask)
       3. Bash command analysis (safe=allow, risky=ask, dangerous=deny)
+         When use_ml_classifier=True, the ML classifier runs alongside
+         regex rules and the more restrictive result wins.
 
     The ask_fn callback is called when confirmation is needed.
     If None, all ASK results are returned without resolution.
@@ -158,11 +160,18 @@ class PermissionChecker:
         rules: list[PermissionRule] | None = None,
         ask_fn: Callable[[str, dict[str, Any]], Any] | None = None,
         auto_allow_reads: bool = True,
+        use_ml_classifier: bool = True,
     ) -> None:
         self._rules = rules or []
         self._ask_fn = ask_fn
         self._auto_allow_reads = auto_allow_reads
         self._denial_tracker = DenialTracker()
+        self._use_ml_classifier = use_ml_classifier
+        self._ml_classifier: CommandClassifier | None = None
+
+        if use_ml_classifier:
+            from .command_classifier import CommandClassifier
+            self._ml_classifier = CommandClassifier()
 
     @property
     def denial_tracker(self) -> DenialTracker:
@@ -312,6 +321,34 @@ class PermissionChecker:
                 tool_input=tool_input,
             )
 
+        # Regex-based classification
+        regex_result = self._check_bash_regex(command, tool_input)
+
+        # ML classifier (if enabled): run alongside and take more restrictive
+        if self._ml_classifier is not None:
+            from .command_classifier import RiskLevel
+
+            analysis = self._ml_classifier.classify(command)
+
+            # Map ML risk level to permission behavior
+            ml_behavior = self._risk_level_to_behavior(analysis.risk_level)
+
+            ml_result = PermissionResult(
+                behavior=ml_behavior,
+                reason=f"ML classifier: {analysis.explanation}",
+                tool_name="bash",
+                tool_input=tool_input,
+            )
+
+            # Take the more restrictive of the two results
+            return self._more_restrictive(regex_result, ml_result)
+
+        return regex_result
+
+    def _check_bash_regex(
+        self, command: str, tool_input: dict[str, Any],
+    ) -> PermissionResult:
+        """Regex-based bash command safety analysis."""
         # Check dangerous commands (deny)
         cmd_lower = command.lower()
         for dangerous in DANGEROUS_COMMANDS:
@@ -359,3 +396,31 @@ class PermissionChecker:
             tool_name="bash",
             tool_input=tool_input,
         )
+
+    @staticmethod
+    def _risk_level_to_behavior(risk_level: Any) -> PermissionBehavior:
+        """Map an ML RiskLevel to a PermissionBehavior."""
+        from .command_classifier import RiskLevel
+
+        if risk_level == RiskLevel.SAFE:
+            return PermissionBehavior.ALLOW
+        if risk_level == RiskLevel.LOW:
+            return PermissionBehavior.ALLOW
+        if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL):
+            return PermissionBehavior.DENY
+        # MEDIUM → ask
+        return PermissionBehavior.ASK
+
+    @staticmethod
+    def _more_restrictive(
+        a: PermissionResult, b: PermissionResult,
+    ) -> PermissionResult:
+        """Return the more restrictive of two permission results."""
+        order = {
+            PermissionBehavior.ALLOW: 0,
+            PermissionBehavior.ASK: 1,
+            PermissionBehavior.DENY: 2,
+        }
+        if order[b.behavior] > order[a.behavior]:
+            return b
+        return a

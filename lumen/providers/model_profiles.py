@@ -81,6 +81,9 @@ class ModelCapabilities:
     # 预训练特性
     native_tool_tokens: bool = False    # Model was pretrained with tool tokens
     tool_token_prefix: str | None = None  # e.g. "<|python_tag|>" for Llama
+    # Extended thinking / reasoning support
+    supports_thinking: bool = False
+    thinking_format: str = "none"       # "anthropic_blocks", "openai_reasoning", "none"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -247,6 +250,8 @@ def _openai_o_series_profile() -> ModelProfile:
             supports_streaming=True,
             supports_parallel_tool_calls=True,
             system_role_name="developer",  # o1 uses "developer" role
+            supports_thinking=True,
+            thinking_format="openai_reasoning",
         ),
     )
 
@@ -266,6 +271,8 @@ def _anthropic_claude_profile() -> ModelProfile:
             requires_alternating_roles=True,
             max_tools=128,
             native_tool_tokens=True,
+            supports_thinking=True,
+            thinking_format="anthropic_blocks",
         ),
     )
 

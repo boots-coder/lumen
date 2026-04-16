@@ -36,6 +36,7 @@ from .compact.auto_compact import (
 )
 from .compact.compactor import Compactor
 from .context.session import Session
+from .context.session_memory import SessionMemoryManager
 from .context.system_prompt import SystemPromptBuilder
 from .providers.factory import create_provider
 from .tokens.counter import get_context_window, get_max_output_tokens
@@ -53,6 +54,13 @@ from .services.permissions import (
     PermissionBehavior, PermissionChecker, PermissionResult, PermissionRule,
 )
 from .services.retry import RetryConfig, with_retry
+from .services.persistent_retry import PersistentRetryConfig, PersistentRetryManager
+from .services.thinking import ThinkingConfig, ThinkingManager, ThinkingMode, ThinkingResult
+from .services.prompt_cache import PromptCacheManager, CacheStats
+from .services.structured_output import (
+    OutputFormat, StructuredOutputConfig, StructuredResult,
+    prepare_structured_request, validate_output,
+)
 from .services.tool_executor import (
     ToolExecutor, ToolExecRequest, ToolExecResult, ToolStatus,
 )
@@ -158,6 +166,10 @@ class Agent:
         retry_config: RetryConfig | None = None,
         fallback_model: str | None = None,
         enable_file_cache: bool = True,
+        structured_output: StructuredOutputConfig | None = None,
+        session_memory: bool = True,
+        thinking: ThinkingConfig | None = None,
+        persistent_retry: PersistentRetryConfig | None = None,
     ) -> None:
         self._model = model
         self._temperature = temperature
@@ -241,6 +253,31 @@ class Agent:
         # File state cache
         self._file_cache = FileStateCache() if enable_file_cache else None
 
+        # Prompt cache manager
+        self._cache_manager = PromptCacheManager()
+
+        # Structured output
+        self._structured_output = structured_output
+
+        # Session memory (dynamic key-fact extraction)
+        self._session_memory_enabled = session_memory
+        if session_memory:
+            memory_path = self._cwd / ".engram" / "session_memory.json"
+            self._session_memory = SessionMemoryManager(storage_path=memory_path)
+            self._session_memory.load()
+        else:
+            self._session_memory = None
+
+        # Thinking / extended reasoning
+        self._thinking = thinking
+
+        # Persistent retry (CI/batch mode)
+        self._persistent_retry = persistent_retry
+        self._persistent_retry_manager = (
+            PersistentRetryManager() if persistent_retry and persistent_retry.enabled
+            else None
+        )
+
         # Tool executor (concurrent read, serial write)
         self._tool_executor = ToolExecutor(
             execute_fn=self._execute_single_tool,
@@ -290,6 +327,15 @@ class Agent:
         # Inject context reminder on first turn (git, memory, cwd)
         if not self._context_injected:
             context_reminder = await self._prompt_builder.build_context_reminder()
+            # Append session memory context to the first-turn reminder
+            if self._session_memory and len(self._session_memory) > 0:
+                memory_context = self._session_memory.get_relevant_context(
+                    message, top_k=10,
+                )
+                if memory_context:
+                    context_reminder = (
+                        (context_reminder or "") + "\n\n" + memory_context
+                    ).strip()
             if context_reminder:
                 self._session.add_user(context_reminder)
             self._context_injected = True
@@ -365,12 +411,78 @@ class Agent:
             self._max_output_tokens,
         )
 
+        # Session memory extraction (every 3 turns to avoid overhead)
+        if (
+            self._session_memory is not None
+            and self._session_memory.turn_count % 3 == 0
+            and len(self._session.messages) >= 2
+        ):
+            try:
+                await self._session_memory.extract_from_turn(
+                    self._session.messages, self._provider, self._model,
+                )
+                self._session_memory.save()
+            except Exception as e:
+                logger.debug("Session memory extraction skipped: %s", e)
+
         return ChatResponse(
             content=final_content,
             token_usage=self._session.token_usage,
             was_compacted=compaction_result is not None,
             compaction_result=compaction_result,
         )
+
+    async def query(
+        self,
+        prompt: str,
+        schema: type | dict[str, Any] | None = None,
+        **chat_kwargs: Any,
+    ) -> Any:
+        """
+        Convenience method: send *prompt* and return structured output.
+
+        Temporarily activates structured output for this single call,
+        then restores the previous config.
+
+        Parameters
+        ----------
+        prompt : str
+            The user prompt.
+        schema : type[BaseModel] | dict | None
+            The desired output schema.  A Pydantic model class or a raw
+            JSON-schema dict.
+        **chat_kwargs
+            Forwarded to :meth:`chat`.
+
+        Returns
+        -------
+        BaseModel | dict
+            The parsed (and optionally validated) data.
+
+        Raises
+        ------
+        ValueError
+            If the model output cannot be parsed as valid JSON or fails
+            schema validation.
+        """
+        config = StructuredOutputConfig(
+            format=OutputFormat.JSON_SCHEMA if schema else OutputFormat.JSON,
+            schema=schema,
+        )
+        previous = self._structured_output
+        self._structured_output = config
+        try:
+            response = await self.chat(prompt, **chat_kwargs)
+        finally:
+            self._structured_output = previous
+
+        result = validate_output(response.content, config)
+
+        if not result.is_valid:
+            raise ValueError(
+                f"Structured output validation failed: {result.validation_errors}"
+            )
+        return result.data
 
     async def stream(self, message: str) -> AsyncIterator[str]:
         """Stream the response, yielding text chunks as they arrive."""
@@ -468,6 +580,25 @@ class Agent:
     def model_profile(self) -> ModelProfile:
         return self._model_profile
 
+    @property
+    def cache_stats(self) -> CacheStats:
+        """Return prompt cache statistics."""
+        return self._cache_manager.get_cache_stats()
+
+    @property
+    def session_memory(self) -> SessionMemoryManager | None:
+        """Access the session memory manager (None if disabled)."""
+        return self._session_memory
+
+    @property
+    def thinking_config(self) -> ThinkingConfig | None:
+        """Current thinking/extended reasoning configuration."""
+        return self._thinking
+
+    @thinking_config.setter
+    def thinking_config(self, config: ThinkingConfig | None) -> None:
+        self._thinking = config
+
     # ── Mode switching ────────────────────────────────────────────────────────
 
     def enable_code_reading_mode(self) -> None:
@@ -517,6 +648,22 @@ class Agent:
         """Call the provider with retry logic."""
         from ._types import ProviderResponse
 
+        # Apply prompt caching (mutates copies, not originals)
+        api_messages = self._session.as_api_messages(self._provider_type)
+        cached_messages, cached_system, cached_tools = (
+            self._cache_manager.prepare_messages(
+                api_messages, system, tools_schema, self._model_profile,
+            )
+        )
+
+        # Apply thinking config if enabled
+        thinking_config = self._thinking
+        if thinking_config is not None:
+            # Auto-adjust budget based on context usage
+            thinking_config = ThinkingManager.adjust_budget(
+                self._session.token_usage, thinking_config,
+            )
+
         async def _do_call(**kwargs) -> ProviderResponse:
             max_tokens = kwargs.get("max_tokens", self._max_output_tokens)
             model = kwargs.get("model", None)
@@ -527,13 +674,39 @@ class Agent:
                 # Use fallback — log it
                 logger.info("Using fallback model: %s", model)
 
-            return await provider.chat(
-                messages=self._session.as_api_messages(self._provider_type),
-                system=system,
-                max_tokens=max_tokens,
-                temperature=self._temperature,
-                tools=tools_schema,
+            # Build base payload for thinking injection
+            call_kwargs: dict[str, Any] = {
+                "messages": cached_messages,
+                "system": cached_system,
+                "max_tokens": max_tokens,
+                "temperature": self._temperature,
+                "tools": cached_tools,
+            }
+
+            # Inject thinking parameters if configured
+            if thinking_config is not None:
+                call_kwargs = ThinkingManager.prepare_request(
+                    thinking_config, self._model_profile, call_kwargs,
+                )
+
+            return await provider.chat(**call_kwargs)
+
+        # Wrap in persistent retry if enabled
+        if self._persistent_retry_manager and self._persistent_retry:
+            async def _retriable_call(**kwargs):
+                r = await with_retry(
+                    _do_call,
+                    config=self._retry_config,
+                    max_tokens=self._max_output_tokens,
+                )
+                return r.result
+
+            pr_result = await self._persistent_retry_manager.execute_with_persistent_retry(
+                _retriable_call,
+                config=self._persistent_retry,
+                initial_model=self._model,
             )
+            return pr_result.result
 
         try:
             result = await with_retry(

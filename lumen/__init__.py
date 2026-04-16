@@ -21,6 +21,21 @@ from .services.hooks import HookRegistry, PreToolHookResult, PostToolHookResult
 from .services.retry import RetryConfig
 from .services.abort import AbortController, AbortError
 from .services.errors import ErrorType, ClassifiedError
+from .services.prompt_cache import PromptCacheManager, CacheStrategy, CacheStats
+from .services.structured_output import (
+    OutputFormat, StructuredOutputConfig, StructuredResult,
+)
+from .services.thinking import ThinkingConfig, ThinkingMode, ThinkingResult
+from .services.command_classifier import (
+    CommandClassifier, CommandAnalysis, CommandComponent, RiskLevel, ComponentType,
+)
+from .services.skills import Skill, SkillRegistry, SkillExecutor, SkillResult
+from .services.persistent_retry import (
+    PersistentRetryConfig, PersistentRetryManager, PersistentRetryResult, RetryLogEntry,
+)
+
+# Context
+from .context.session_memory import SessionMemoryManager, MemoryCategory, MemoryEntry
 
 # Utils
 from .utils.file_state_cache import FileStateCache
@@ -46,8 +61,40 @@ __all__ = [
     "AbortError",
     "ErrorType",
     "ClassifiedError",
+    # Prompt Cache
+    "PromptCacheManager",
+    "CacheStrategy",
+    "CacheStats",
+    # Structured Output
+    "OutputFormat",
+    "StructuredOutputConfig",
+    "StructuredResult",
+    # Thinking / Extended Reasoning
+    "ThinkingConfig",
+    "ThinkingMode",
+    "ThinkingResult",
+    # Session Memory
+    "SessionMemoryManager",
+    "MemoryCategory",
+    "MemoryEntry",
+    # Command Classifier
+    "CommandClassifier",
+    "CommandAnalysis",
+    "CommandComponent",
+    "RiskLevel",
+    "ComponentType",
+    # Skills
+    "Skill",
+    "SkillRegistry",
+    "SkillExecutor",
+    "SkillResult",
+    # Persistent Retry
+    "PersistentRetryConfig",
+    "PersistentRetryManager",
+    "PersistentRetryResult",
+    "RetryLogEntry",
     # Utils
     "FileStateCache",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
