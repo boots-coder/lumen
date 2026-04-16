@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # → lumen/
 
 from lumen import Agent, PermissionChecker
 from lumen.providers.model_profiles import detect_profile
