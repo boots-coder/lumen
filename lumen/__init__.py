@@ -33,9 +33,11 @@ from .services.skills import Skill, SkillRegistry, SkillExecutor, SkillResult
 from .services.persistent_retry import (
     PersistentRetryConfig, PersistentRetryManager, PersistentRetryResult, RetryLogEntry,
 )
+from .services.subagent import SubAgentManager, SubAgentConfig, SubAgentResult
 
 # Context
 from .context.session_memory import SessionMemoryManager, MemoryCategory, MemoryEntry
+from .context.transcript import TranscriptWriter, TranscriptReader, SessionInfo
 
 # Utils
 from .utils.file_state_cache import FileStateCache
@@ -93,6 +95,14 @@ __all__ = [
     "PersistentRetryManager",
     "PersistentRetryResult",
     "RetryLogEntry",
+    # Transcript
+    "TranscriptWriter",
+    "TranscriptReader",
+    "SessionInfo",
+    # Sub-agents
+    "SubAgentManager",
+    "SubAgentConfig",
+    "SubAgentResult",
     # Utils
     "FileStateCache",
 ]

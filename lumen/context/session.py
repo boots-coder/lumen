@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +38,7 @@ class Session:
     """
 
     model: str
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[Message] = field(default_factory=list)
     token_usage: TokenUsage = field(default_factory=TokenUsage)
     compaction_count: int = 0
@@ -181,6 +183,7 @@ class Session:
     def to_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
+            "session_id": self.session_id,
             "created_at": self.created_at,
             "compaction_count": self.compaction_count,
             "consecutive_compact_failures": self.consecutive_compact_failures,
@@ -213,6 +216,8 @@ class Session:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Session":
         session = cls(model=data["model"])
+        if "session_id" in data:
+            session.session_id = data["session_id"]
         session.created_at = data.get("created_at", session.created_at)
         session.compaction_count = data.get("compaction_count", 0)
         session.consecutive_compact_failures = data.get("consecutive_compact_failures", 0)

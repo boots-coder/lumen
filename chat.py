@@ -48,6 +48,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.styles import Style as PTStyle
 
 from lumen import Agent, PermissionChecker, PermissionBehavior, HookRegistry, RetryConfig
+from lumen.context.transcript import TranscriptReader, list_recent_sessions
 from lumen.services.permissions import PermissionRule
 from lumen.tools import (
     FileReadTool, FileWriteTool, FileEditTool,
@@ -362,6 +363,7 @@ def render_help() -> None:
         ("/reset",        "清空对话历史"),
         ("/save",         "保存会话到文件"),
         ("/load",         "从文件加载会话"),
+        ("/resume",       "恢复最近的自动保存会话"),
         ("/config",       "重新配置模型和 Key"),
         ("/quit",         "退出  (或 Ctrl+C / Ctrl+D)"),
         ("",              ""),
@@ -557,6 +559,10 @@ async def handle_save(agent: Agent, pt: PromptSession) -> None:
         path = raw.strip() or default
         agent.save_session(path)
         render_system(f"✓ 已保存 → {path}", C_SUCCESS)
+        if agent.transcript:
+            render_system(
+                f"  (会话也在自动保存到 {agent.transcript.path})", C_DIM,
+            )
     except (KeyboardInterrupt, EOFError):
         render_system("已取消", C_DIM)
     except Exception as e:
@@ -583,6 +589,84 @@ async def handle_load(
         return agent
     except Exception as e:
         render_error(f"加载失败: {e}")
+        return None
+
+
+async def handle_resume(config: AgentConfig, pt: PromptSession) -> Agent | None:
+    """List recent auto-saved sessions and let the user pick one to resume."""
+    cwd = Path.cwd()
+    sessions = list_recent_sessions(cwd, limit=10)
+    if not sessions:
+        render_system("没有找到自动保存的会话。", C_WARN)
+        return None
+
+    table = Table(box=box.SIMPLE, show_header=True, padding=(0, 1))
+    table.add_column("#", style=C_NUM, width=4)
+    table.add_column("Session ID", style="white")
+    table.add_column("Model", style=C_DIM)
+    table.add_column("Messages", style="white", justify="right")
+    table.add_column("Created", style=C_DIM)
+    table.add_column("Last prompt", style="white")
+
+    for i, s in enumerate(sessions, 1):
+        created = s.created_at[:19].replace("T", " ") if s.created_at else "?"
+        prompt_preview = s.last_prompt[:50] + ("..." if len(s.last_prompt) > 50 else "")
+        table.add_row(
+            f"[{i}]",
+            s.session_id[:12] + "...",
+            s.model or "?",
+            str(s.message_count),
+            created,
+            prompt_preview,
+        )
+
+    console.print(Panel(table, title="最近的自动保存会话", border_style=C_DIM))
+
+    try:
+        raw = await pt.prompt_async("  输入编号恢复 (或 Enter 取消) › ")
+        raw = raw.strip()
+        if not raw:
+            return None
+        idx = int(raw) - 1
+        if not (0 <= idx < len(sessions)):
+            render_system(f"请输入 1-{len(sessions)} 之间的数字", C_WARN)
+            return None
+    except (ValueError, KeyboardInterrupt, EOFError):
+        return None
+
+    chosen = sessions[idx]
+    try:
+        messages, metadata = TranscriptReader.load_session(chosen.file_path)
+        if not messages:
+            render_error("会话文件为空。")
+            return None
+
+        # Rebuild a Session from the transcript messages
+        from lumen.context.session import Session
+        session = Session(model=config.model)
+        session.session_id = chosen.session_id
+        session.messages = messages
+
+        agent = Agent(
+            api_key=config.api_key,
+            model=config.model,
+            base_url=config.base_url,
+            session=session,
+            auto_compact=True,
+            tools=[
+                TreeTool(), DefinitionsTool(), FileReadTool(),
+                FileWriteTool(), FileEditTool(),
+                GlobTool(), GrepTool(), BashTool(),
+            ],
+        )
+        render_system(
+            f"✓ 已恢复会话 {chosen.session_id[:12]}... "
+            f"({len(messages)} 条消息)",
+            C_SUCCESS,
+        )
+        return agent
+    except Exception as e:
+        render_error(f"恢复失败: {e}")
         return None
 
 
@@ -648,8 +732,11 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
     info.add_column(style="white")
     info.add_row("Provider",       config.provider_name)
     info.add_row("Model",          agent.model)
+    info.add_row("Session ID",     agent.session.session_id[:12] + "...")
     info.add_row("Context window", f"{agent.context_window:,} tokens")
     info.add_row("Auto-compact",   "✓ 开启")
+    if agent.transcript:
+        info.add_row("Auto-save",  f"✓ {agent.transcript.path}")
     info.add_row("Git state",      "✓ 注入")
     info.add_row("Memory files",   "✓ ENGRAM.md 自动发现")
     info.add_row("Tools (读)",     "✓ tree · definitions · read_file · glob · grep")
@@ -667,82 +754,95 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
 
     _last_ctrl_c = False
 
-    while True:
-        _last_ctrl_c = False
-        try:
-            console.print(make_token_bar(agent))
-            user_input = (await pt.prompt_async("  You › ")).strip()
-            if not user_input:
-                continue
-        except EOFError:
-            console.print()
-            render_system("Goodbye!", C_DIM)
-            return False
-        except KeyboardInterrupt:
-            console.print()
-            render_system("Goodbye!", C_DIM)
-            return False
-
-        cmd = user_input.lower()
-
-        # ── Slash 命令 ────────────────────────────────────────────────────────
-        if cmd in ("/quit", "/exit", "/q"):
-            render_system("Goodbye!", C_DIM)
-            return False
-
-        elif cmd == "/help":
-            render_help();  continue
-
-        elif cmd == "/status":
-            render_status(agent);  continue
-
-        elif cmd.startswith("/mode"):
-            handle_mode(agent, user_input[5:].strip());  continue
-
-        elif cmd == "/compact":
-            await handle_compact(agent);  continue
-
-        elif cmd == "/reset":
-            agent.reset()
-            render_system("✓ 对话历史已清空。", C_SUCCESS);  continue
-
-        elif cmd == "/save":
-            await handle_save(agent, pt);  continue
-
-        elif cmd.startswith("/load"):
-            new = await handle_load(user_input[5:].strip(), config, pt)
-            if new:
-                agent = new
-            continue
-
-        elif cmd == "/config":
-            render_system("返回配置向导…", C_DIM)
-            return True
-
-        elif cmd.startswith("/"):
-            render_system(f"未知命令: {user_input}  输入 /help 查看帮助", C_WARN)
-            continue
-
-        # ── 正常聊天 ──────────────────────────────────────────────────────────
-        console.print(render_user_message(user_input))
-        console.print()
-
-        try:
-            agent.reset_abort()  # Clear any previous abort state
-            await agent_response(agent, user_input)
-            console.print()
-        except KeyboardInterrupt:
-            agent.abort("User pressed Ctrl+C")
-            if _last_ctrl_c:
+    try:
+        while True:
+            _last_ctrl_c = False
+            try:
+                console.print(make_token_bar(agent))
+                user_input = (await pt.prompt_async("  You › ")).strip()
+                if not user_input:
+                    continue
+            except EOFError:
                 console.print()
                 render_system("Goodbye!", C_DIM)
                 return False
-            _last_ctrl_c = True
-            render_system("已取消。（再按一次 Ctrl+C 退出）", C_WARN)
-        except Exception as e:
-            render_error(str(e))
-            if os.environ.get("LUMEN_DEBUG"):
-                traceback.print_exc()
+            except KeyboardInterrupt:
+                console.print()
+                render_system("Goodbye!", C_DIM)
+                return False
+
+            cmd = user_input.lower()
+
+            # ── Slash 命令 ────────────────────────────────────────────────────
+            if cmd in ("/quit", "/exit", "/q"):
+                render_system("Goodbye!", C_DIM)
+                return False
+
+            elif cmd == "/help":
+                render_help();  continue
+
+            elif cmd == "/status":
+                render_status(agent);  continue
+
+            elif cmd.startswith("/mode"):
+                handle_mode(agent, user_input[5:].strip());  continue
+
+            elif cmd == "/compact":
+                await handle_compact(agent);  continue
+
+            elif cmd == "/reset":
+                agent.reset()
+                render_system("✓ 对话历史已清空。", C_SUCCESS);  continue
+
+            elif cmd == "/save":
+                await handle_save(agent, pt);  continue
+
+            elif cmd.startswith("/load"):
+                new = await handle_load(user_input[5:].strip(), config, pt)
+                if new:
+                    agent = new
+                continue
+
+            elif cmd == "/resume":
+                new = await handle_resume(config, pt)
+                if new:
+                    agent = new
+                continue
+
+            elif cmd == "/config":
+                render_system("返回配置向导…", C_DIM)
+                return True
+
+            elif cmd.startswith("/"):
+                render_system(f"未知命令: {user_input}  输入 /help 查看帮助", C_WARN)
+                continue
+
+            # ── 正常聊天 ──────────────────────────────────────────────────────
+            console.print(render_user_message(user_input))
+            console.print()
+
+            try:
+                agent.reset_abort()  # Clear any previous abort state
+                await agent_response(agent, user_input)
+                console.print()
+            except KeyboardInterrupt:
+                agent.abort("User pressed Ctrl+C")
+                if _last_ctrl_c:
+                    console.print()
+                    render_system("Goodbye!", C_DIM)
+                    return False
+                _last_ctrl_c = True
+                render_system("已取消。（再按一次 Ctrl+C 退出）", C_WARN)
+            except Exception as e:
+                render_error(str(e))
+                if os.environ.get("LUMEN_DEBUG"):
+                    traceback.print_exc()
+    finally:
+        # Flush and close transcript on any exit path
+        try:
+            await agent.close()
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ from .compact.compactor import Compactor
 from .context.session import Session
 from .context.session_memory import SessionMemoryManager
 from .context.system_prompt import SystemPromptBuilder
+from .context.transcript import TranscriptWriter
 from .providers.factory import create_provider
 from .tokens.counter import get_context_window, get_max_output_tokens
 from .tools import Tool, ToolRegistry
@@ -61,6 +62,7 @@ from .services.structured_output import (
     OutputFormat, StructuredOutputConfig, StructuredResult,
     prepare_structured_request, validate_output,
 )
+from .services.subagent import SubAgentManager
 from .services.tool_executor import (
     ToolExecutor, ToolExecRequest, ToolExecResult, ToolStatus,
 )
@@ -170,6 +172,7 @@ class Agent:
         session_memory: bool = True,
         thinking: ThinkingConfig | None = None,
         persistent_retry: PersistentRetryConfig | None = None,
+        auto_save: bool = True,
     ) -> None:
         self._model = model
         self._temperature = temperature
@@ -278,11 +281,25 @@ class Agent:
             else None
         )
 
+        # Sub-agent manager (not auto-registered — call enable_subagents())
+        self._subagent_manager = SubAgentManager(self)
+
         # Tool executor (concurrent read, serial write)
         self._tool_executor = ToolExecutor(
             execute_fn=self._execute_single_tool,
             abort_event=self._abort.event,
         )
+
+        # Transcript auto-save
+        self._auto_save = auto_save
+        if auto_save:
+            self._transcript: TranscriptWriter | None = TranscriptWriter(
+                session_id=self._session.session_id,
+                cwd=self._cwd,
+                model=model,
+            )
+        else:
+            self._transcript = None
 
         logger.debug(
             "Agent ready: model=%s ctx=%d max_out=%d compact=%s provider=%s "
@@ -341,7 +358,11 @@ class Agent:
             self._context_injected = True
 
         # Add user message to session
-        self._session.add_user(message)
+        user_msg = self._session.add_user(message)
+
+        # Auto-save: append user message to transcript
+        if self._transcript:
+            self._transcript.append_message(user_msg)
 
         # Tool calling loop
         tool_call_round = 0
@@ -374,15 +395,19 @@ class Agent:
             if not response.tool_calls:
                 if response.content:
                     final_content = response.content
-                    self._session.add_assistant(response.content, response.completion_tokens)
+                    asst_msg = self._session.add_assistant(response.content, response.completion_tokens)
+                    if self._transcript:
+                        self._transcript.append_message(asst_msg)
                 break
 
             # Assistant message WITH tool calls — must be in history
-            self._session.add_assistant_with_tool_calls(
+            asst_tc_msg = self._session.add_assistant_with_tool_calls(
                 content=response.content,
                 tool_calls=response.tool_calls,
                 completion_tokens=response.completion_tokens,
             )
+            if self._transcript:
+                self._transcript.append_message(asst_tc_msg)
 
             if response.content:
                 final_content = response.content
@@ -545,7 +570,34 @@ class Agent:
         self._abort.reset()
         if self._file_cache:
             self._file_cache.clear()
+        # Cleanup sub-agents on reset
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._subagent_manager.cleanup())
+        except RuntimeError:
+            pass
         logger.debug("Session reset.")
+
+    async def close(self) -> None:
+        """Cleanup all resources including transcript and background sub-agents."""
+        if self._transcript:
+            await self._transcript.flush()
+            self._transcript.close()
+        await self._subagent_manager.cleanup()
+        logger.debug("Agent closed.")
+
+    def enable_subagents(self) -> None:
+        """Register the SubAgentTool, allowing the model to spawn child agents."""
+        from .tools.subagent_tool import SubAgentTool
+        tool = SubAgentTool(agent_manager=self._subagent_manager)
+        self._tool_registry.register(tool)
+        logger.debug("Sub-agent tool enabled.")
+
+    @property
+    def subagent_manager(self) -> SubAgentManager:
+        """Access the sub-agent manager for programmatic spawning."""
+        return self._subagent_manager
 
     def save_session(self, path: str | Path) -> None:
         self._session.save(path)
@@ -624,6 +676,10 @@ class Agent:
     @property
     def session(self) -> Session:
         return self._session
+
+    @property
+    def transcript(self) -> TranscriptWriter | None:
+        return self._transcript
 
     @property
     def context_window(self) -> int:
@@ -838,12 +894,16 @@ class Agent:
                 self._update_file_cache(result, requests)
 
             # Add to session
-            self._session.add_tool_result(
+            tool_msg = self._session.add_tool_result(
                 tool_use_id=result.tool_call_id,
                 tool_name=result.tool_name,
                 content=output,
                 is_error=result.is_error,
             )
+
+            # Auto-save: append tool result to transcript
+            if self._transcript:
+                self._transcript.append_message(tool_msg)
 
             await _fire(on_tool_result, result.tool_name, output, result.is_error)
 

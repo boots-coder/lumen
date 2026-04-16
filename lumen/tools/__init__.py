@@ -13,6 +13,7 @@ from .definitions import DefinitionsTool
 from .web_search import WebSearchTool
 from .web_fetch import WebFetchTool
 from .lsp import LSPTool
+from .subagent_tool import SubAgentTool
 
 __all__ = [
     "Tool",
@@ -29,4 +30,5 @@ __all__ = [
     "WebSearchTool",
     "WebFetchTool",
     "LSPTool",
+    "SubAgentTool",
 ]

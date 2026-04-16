@@ -13,7 +13,7 @@ Lumen 是一个模型无关、生产级的 AI 编码 Agent 框架（Python 3.11+
 ## 特性一览
 
 - **模型无关** — OpenAI / Anthropic / DeepSeek / Ollama / 任意 OpenAI 兼容 API，一行切换
-- **15 个内置工具** — 文件读写、代码搜索、Shell 执行、Web 搜索/抓取、LSP 代码智能
+- **13 个内置工具** — 文件读写、代码搜索、Shell 执行、Web 搜索/抓取、LSP 代码智能、子代理
 - **Extended Thinking** — 支持 Anthropic thinking blocks / OpenAI reasoning_effort / 通用 CoT，预算自适应
 - **Prompt Cache** — Anthropic 原生 `cache_control` + 通用 hash-based 缓存，自动降低 API 开销
 - **结构化输出** — JSON Schema 强制输出，适配 OpenAI / Anthropic / Gemini，Pydantic 验证
@@ -23,6 +23,8 @@ Lumen 是一个模型无关、生产级的 AI 编码 Agent 框架（Python 3.11+
 - **技能系统** — 可复用的任务模板，支持 JSON/YAML 定义和模糊搜索
 - **持久化重试** — 阶梯式模型升级 + Webhook 告警，适用于 CI/批处理场景
 - **生命周期钩子** — pre/post tool hooks，支持拦截、修改和补救
+- **对话自动持久化** — JSONL 追加写入，crash-safe，支持 `/resume` 恢复历史会话
+- **子代理系统** — 父代理可 spawn 子代理执行独立任务，支持同步/异步模式，abort 联动
 
 ---
 
@@ -63,6 +65,7 @@ lumen/
 │   ├── context/
 │   │   ├── session.py             # 会话管理 + Token 计数
 │   │   ├── session_memory.py      # 动态会话记忆（TF-IDF 检索）
+│   │   ├── transcript.py          # 对话自动持久化（JSONL）
 │   │   ├── system_prompt.py       # 系统 Prompt 分层构建
 │   │   ├── memory.py              # ENGRAM.md 记忆文件发现与加载
 │   │   ├── project_scanner.py     # 项目自动扫描
@@ -82,7 +85,8 @@ lumen/
 │   │   ├── bash.py                # Shell 命令执行
 │   │   ├── web_search.py          # Web 搜索（DuckDuckGo）
 │   │   ├── web_fetch.py           # 网页抓取 + 文本提取
-│   │   └── lsp.py                 # LSP 代码智能
+│   │   ├── lsp.py                 # LSP 代码智能
+│   │   └── subagent_tool.py       # 子代理工具
 │   ├── providers/
 │   │   ├── openai_compat.py       # OpenAI 兼容协议
 │   │   ├── anthropic.py           # Anthropic 原生 API
@@ -100,6 +104,7 @@ lumen/
 │   │   ├── retry.py               # 标准重试（指数退避）
 │   │   ├── tool_executor.py       # 并发工具执行
 │   │   ├── lsp.py                 # LSP 客户端
+│   │   ├── subagent.py            # 子代理管理器
 │   │   └── abort.py               # 取消控制
 │   └── tokens/
 │       └── counter.py             # Token 计数
@@ -126,6 +131,7 @@ lumen/
 | `web_search` | DuckDuckGo 搜索（无需 API Key） |
 | `web_fetch` | 抓取网页并提取可读文本 |
 | `lsp` | LSP 代码智能：跳转定义/查找引用/悬停信息/符号搜索 |
+| `sub_agent` | 生成子代理执行独立任务（需 `enable_subagents()`） |
 
 ### Extended Thinking
 
@@ -165,6 +171,40 @@ result = await agent.query("分析这段代码", schema=CodeAnalysis)
 - **命令组合** (权重 0.3) — `curl | bash` 0.9, 子 shell 0.3
 
 上下文感知：`rm -f` 比单独的 `-f` 风险高得多。
+
+### 对话自动持久化
+
+每条消息自动追加到 JSONL 文件，crash-safe：
+
+```
+~/.lumen/projects/{project-path}/{session-id}.jsonl
+```
+
+- **追加写入** — 100ms 缓冲，异步刷盘
+- **快速恢复** — 尾部 64KB 读取 metadata，`/resume` 一键恢复
+- **Session ID** — UUID 自动生成，启动时显示
+
+### 子代理系统
+
+父代理可 spawn 独立子代理，实现任务并行化：
+
+```python
+agent.enable_subagents()  # 注册 sub_agent 工具
+
+# 或编程式使用
+from lumen import SubAgentConfig
+result = await agent.subagent_manager.spawn(SubAgentConfig(
+    prompt="分析 auth 模块的安全性",
+    description="安全审计",
+    run_in_background=True,  # 后台异步执行
+))
+```
+
+隔离策略：
+- **File Cache** — 克隆（无交叉污染）
+- **Abort** — 父子联动（父 abort → 子 abort，反之不影响）
+- **Session** — 独立对话历史
+- **Tools** — 继承或自定义
 
 ### 动态会话记忆
 
@@ -273,8 +313,9 @@ agent = Agent(
 | `/mode general` | 切回通用模式 |
 | `/compact` | 手动压缩上下文 |
 | `/reset` | 清空对话历史 |
-| `/save` | 保存会话到 JSON 文件 |
+| `/save` | 保存会话到 JSON 文件（对话已自动持久化） |
 | `/load` | 从 JSON 文件恢复会话 |
+| `/resume` | 列出最近会话，选择恢复 |
 | `/config` | 重新配置模型和 API Key |
 | `/quit` | 退出（或 Ctrl+D） |
 
