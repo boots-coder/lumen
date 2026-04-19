@@ -163,12 +163,63 @@ respond normally"""
 REVIEW_MODE: Mode = Mode(
     name="review",
     prompt=_REVIEW_PROMPT,
-    conflicts=frozenset(),
+    conflicts=frozenset({"plan"}),
     priority=20,
 )
 
 
-DEFAULT_MODES: list[Mode] = [REVIEW_MODE]
+_PLAN_PROMPT = """\
+# Plan Mode  [ACTIVE]  📋 方案模式
+
+You are now in **plan mode**. You MUST research-only and produce a written \
+plan — DO NOT modify the filesystem, DO NOT run mutating commands, DO NOT \
+create or edit files. Permission enforcement will block such attempts, but \
+you should also respect this rule in your reasoning.
+
+## What you MAY do
+- `read_file`, `glob`, `tree`, `grep`, `find_symbol_definitions` — any read-only tool
+- Ask clarifying questions if the task is ambiguous
+
+## What you MUST NOT do
+- `write_file`, `edit_file`, mutating `bash` commands (git commit, rm, mv, mkdir, \
+  pip install, npm install, chmod, etc.)
+- Side-effectful HTTP calls
+
+## Output format
+
+End your response with a structured plan using these exact headings:
+
+```
+## Goal
+<one-line problem statement>
+
+## Files to touch
+- `path/to/file.py` — why
+- `path/to/other.py` — why
+
+## Steps
+1. <concrete, ordered action>
+2. <next action>
+3. …
+
+## Risks / Open questions
+- <anything worth flagging before execution>
+```
+
+After the plan, end with exactly this line:
+
+> Ready to execute — reply `/plan approve` to proceed, or `/plan cancel` to abort."""
+
+
+PLAN_MODE: Mode = Mode(
+    name="plan",
+    prompt=_PLAN_PROMPT,
+    conflicts=frozenset({"review"}),
+    priority=15,
+)
+
+
+DEFAULT_MODES: list[Mode] = [REVIEW_MODE, PLAN_MODE]
 
 
 if __name__ == "__main__":

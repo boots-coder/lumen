@@ -16,7 +16,7 @@ from ._types import ChatResponse, CompactionResult, Message, Role, TokenUsage, T
 from .context.session import Session
 
 # Services
-from .services.permissions import PermissionChecker, PermissionRule, PermissionBehavior
+from .services.permissions import PermissionChecker, PermissionRule, PermissionBehavior, PermissionMode
 from .services.hooks import HookRegistry, PreToolHookResult, PostToolHookResult
 from .services.retry import RetryConfig
 from .services.abort import AbortController, AbortError
@@ -35,6 +35,13 @@ from .services.persistent_retry import (
 )
 from .services.subagent import SubAgentManager, SubAgentConfig, SubAgentResult
 from .services.review_state import ReviewState, ReviewPhase
+from .services.notifier import Notifier
+from .services.file_edit_tracker import FileEditTracker, FileEditEntry
+from .services.mcp import (
+    MCPClient, MCPError, MCPTool,
+    MCPManager, MCPServerConfig, MCPServerState,
+)
+from .services.auto_dream import AutoDreamService, AutoDreamConfig, DreamStats
 
 # Context
 from .context.session_memory import SessionMemoryManager, MemoryCategory, MemoryEntry
@@ -57,6 +64,7 @@ __all__ = [
     "PermissionChecker",
     "PermissionRule",
     "PermissionBehavior",
+    "PermissionMode",
     "HookRegistry",
     "PreToolHookResult",
     "PostToolHookResult",
@@ -108,6 +116,22 @@ __all__ = [
     # Review Mode (state machine)
     "ReviewState",
     "ReviewPhase",
+    # Desktop notifications
+    "Notifier",
+    # File edit tracking
+    "FileEditTracker",
+    "FileEditEntry",
+    # MCP (Model Context Protocol) client
+    "MCPClient",
+    "MCPError",
+    "MCPTool",
+    "MCPManager",
+    "MCPServerConfig",
+    "MCPServerState",
+    # Auto-Dream (background memory consolidation)
+    "AutoDreamService",
+    "AutoDreamConfig",
+    "DreamStats",
     # Modes (composable system-prompt layers)
     "Mode",
     "ModeStack",

@@ -96,7 +96,9 @@ class ConsoleApprovalHandler:
         content: str,
     ) -> ApprovalResponse:
         self._render_panel(phase, title, content)
-        answer = await self._prompt("审阅 [Y/n/skip/feedback] › ")
+        answer = await self._prompt(
+            "回车=通过  n=驳回  skip=全部通过  (或直接输入反馈) › "
+        )
         return await self._interpret(answer)
 
     # ── Rendering ────────────────────────────────────────────────────────────
@@ -130,7 +132,11 @@ class ConsoleApprovalHandler:
     async def _prompt(self, message: str) -> str:
         try:
             if self._pt_session is not None:
-                result = await self._pt_session.prompt_async(message)
+                # default="" + multiline=False → bare Enter submits empty string,
+                # which _interpret() treats as approval.
+                result = await self._pt_session.prompt_async(
+                    message, default="", multiline=False,
+                )
                 return (result or "").strip()
             return (await asyncio.to_thread(input, message)).strip()
         except KeyboardInterrupt:

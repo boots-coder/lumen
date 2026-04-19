@@ -296,6 +296,19 @@ class SystemPromptBuilder:
     def review_mode(self) -> bool:
         return self._modes.is_active("review")
 
+    def enable_plan_mode(self) -> None:
+        if not self._modes.is_active("plan"):
+            self._modes.activate("plan")
+            self._cached_system = None
+
+    def disable_plan_mode(self) -> None:
+        if self._modes.deactivate("plan"):
+            self._cached_system = None
+
+    @property
+    def plan_mode(self) -> bool:
+        return self._modes.is_active("plan")
+
     @property
     def modes(self) -> ModeStack:
         """Direct access to the ModeStack for advanced usage."""

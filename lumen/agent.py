@@ -285,6 +285,12 @@ class Agent:
         # Sub-agent manager (not auto-registered — call enable_subagents())
         self._subagent_manager = SubAgentManager(self)
 
+        # MCP manager (lazy — created on first connect_mcp/mcp_manager access)
+        self._mcp_manager: Any = None
+
+        # Auto-Dream (memory consolidation). Lazy — call enable_auto_dream().
+        self._auto_dream: Any = None
+
         # Review Mode state machine + approval tool (lazy-registered)
         self._review_state = ReviewState()
         self._approval_tool_registered = False
@@ -453,8 +459,13 @@ class Agent:
             self._max_output_tokens,
         )
 
-        # Session memory extraction (every 3 turns to avoid overhead)
-        if (
+        # Memory extraction / consolidation.
+        # If auto-dream is enabled, it runs async in the background (non-blocking)
+        # and owns its own turn cadence; otherwise fall back to the inline
+        # per-turn extraction (which bumps session_memory.turn_count internally).
+        if self._auto_dream is not None:
+            self._auto_dream.on_turn_complete()
+        elif (
             self._session_memory is not None
             and self._session_memory.turn_count % 3 == 0
             and len(self._session.messages) >= 2
@@ -603,14 +614,116 @@ class Agent:
             await self._transcript.flush()
             self._transcript.close()
         await self._subagent_manager.cleanup()
+        if self._mcp_manager is not None:
+            await self._mcp_manager.close()
         logger.debug("Agent closed.")
 
+    def enable_auto_dream(
+        self, config: Any = None,  # AutoDreamConfig | None
+    ) -> Any:  # AutoDreamService
+        """Enable background memory consolidation (Auto-Dream).
+
+        Replaces the default per-3-turn inline extraction with a non-blocking
+        background dream loop that also periodically consolidates accumulated
+        entries into narrative summaries. Returns the AutoDreamService so the
+        caller can tune it or read stats.
+        """
+        from .services.auto_dream import AutoDreamService, AutoDreamConfig
+        if config is not None and not isinstance(config, AutoDreamConfig):
+            raise TypeError("config must be AutoDreamConfig")
+        self._auto_dream = AutoDreamService(self, config)
+        return self._auto_dream
+
+    def disable_auto_dream(self) -> None:
+        self._auto_dream = None
+
+    @property
+    def auto_dream(self) -> Any:
+        return self._auto_dream
+
+    async def connect_mcp(
+        self,
+        config: Any,  # MCPServerConfig
+        timeout: float = 15.0,
+    ) -> Any:  # MCPServerState
+        """Connect to an MCP server and register each advertised tool on this
+        agent. Returns the server state (includes `.status`, `.tools`, `.error`).
+        """
+        from .services.mcp.manager import MCPManager, MCPServerConfig as _Cfg
+        if self._mcp_manager is None:
+            self._mcp_manager = MCPManager()
+        if not isinstance(config, _Cfg):
+            raise TypeError("connect_mcp expects an MCPServerConfig")
+        state = await self._mcp_manager.connect(config, timeout=timeout)
+        if state.status == "connected":
+            # Only register this server's freshly-discovered bridges
+            from .tools.mcp_tool import MCPToolBridge
+            for bridge in self._mcp_manager.tools():
+                if (
+                    isinstance(bridge, MCPToolBridge)
+                    and bridge.server_name == config.name
+                    and self._tool_registry.get(bridge.name) is None
+                ):
+                    self._tool_registry.register(bridge)
+        return state
+
+    async def connect_mcp_from_config(
+        self, path: Path | str | None = None, timeout: float = 15.0,
+    ) -> list[Any]:
+        """Load `~/.lumen/mcp.json` (or `path`) and connect to every enabled
+        server in parallel. Returns the list of MCPServerState objects."""
+        from .services.mcp.manager import MCPManager
+        if self._mcp_manager is None:
+            self._mcp_manager = MCPManager()
+        cfg_path = Path(path) if path else Path.home() / ".lumen" / "mcp.json"
+        configs = self._mcp_manager.load_config(cfg_path)
+        if not configs:
+            return []
+        states = await self._mcp_manager.connect_all(configs, timeout=timeout)
+        from .tools.mcp_tool import MCPToolBridge
+        for bridge in self._mcp_manager.tools():
+            if (
+                isinstance(bridge, MCPToolBridge)
+                and self._tool_registry.get(bridge.name) is None
+            ):
+                self._tool_registry.register(bridge)
+        return states
+
+    @property
+    def mcp_manager(self) -> Any:
+        """Return the MCPManager (creates on first access)."""
+        if self._mcp_manager is None:
+            from .services.mcp.manager import MCPManager
+            self._mcp_manager = MCPManager()
+        return self._mcp_manager
+
+    def enable_discovery_tools(self) -> None:
+        """Register `tool_search` (rank available tools by query) and
+        `brief` (narrative summary of the current session). Lightweight
+        and independent — safe to enable by default."""
+        from .tools.discovery_tools import ToolSearchTool, BriefTool
+        for tool in (ToolSearchTool(self), BriefTool(self)):
+            if self._tool_registry.get(tool.name) is None:
+                self._tool_registry.register(tool)
+
     def enable_subagents(self) -> None:
-        """Register the SubAgentTool, allowing the model to spawn child agents."""
+        """Register sub-agent spawning + the full background-task suite
+        (`sub_agent`, `task_list`, `task_output`, `task_stop`, `task_wait`)
+        so the model can spawn, observe, harvest, and cancel child agents."""
         from .tools.subagent_tool import SubAgentTool
-        tool = SubAgentTool(agent_manager=self._subagent_manager)
-        self._tool_registry.register(tool)
-        logger.debug("Sub-agent tool enabled.")
+        from .tools.task_tools import (
+            TaskListTool, TaskOutputTool, TaskStopTool, TaskWaitTool,
+        )
+        mgr = self._subagent_manager
+        for tool in (
+            SubAgentTool(agent_manager=mgr),
+            TaskListTool(manager=mgr),
+            TaskOutputTool(manager=mgr),
+            TaskStopTool(manager=mgr),
+            TaskWaitTool(manager=mgr),
+        ):
+            self._tool_registry.register(tool)
+        logger.debug("Sub-agent + background-task tools enabled.")
 
     @property
     def subagent_manager(self) -> SubAgentManager:
@@ -721,6 +834,20 @@ class Agent:
     @property
     def review_state(self) -> ReviewState:
         return self._review_state
+
+    def enable_plan_mode(self) -> None:
+        """Activate Plan Mode: read-only research + structured proposal.
+        Review Mode is auto-deactivated (they're mutually exclusive)."""
+        if self._prompt_builder.review_mode:
+            self.disable_review_mode()
+        self._prompt_builder.enable_plan_mode()
+
+    def disable_plan_mode(self) -> None:
+        self._prompt_builder.disable_plan_mode()
+
+    @property
+    def plan_mode(self) -> bool:
+        return self._prompt_builder.plan_mode
 
     # ── Properties ────────────────────────────────────────────────────────────
 

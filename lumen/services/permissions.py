@@ -31,6 +31,21 @@ class PermissionBehavior(str, Enum):
     DENY = "deny"
 
 
+class PermissionMode(str, Enum):
+    """
+    Session-level permission posture — mirrors Claude Code's permission modes.
+
+    · DEFAULT       ask for write/edit/risky-bash (current lumen behavior)
+    · ACCEPT_EDITS  auto-allow write_file/edit_file; bash still classified
+    · PLAN          read-only research — deny all write/edit/bash
+    · BYPASS        auto-allow everything (explicit opt-in, dangerous)
+    """
+    DEFAULT = "default"
+    ACCEPT_EDITS = "acceptEdits"
+    PLAN = "plan"
+    BYPASS = "bypass"
+
+
 @dataclass
 class PermissionResult:
     """Result of a permission check."""
@@ -161,6 +176,7 @@ class PermissionChecker:
         ask_fn: Callable[[str, dict[str, Any]], Any] | None = None,
         auto_allow_reads: bool = True,
         use_ml_classifier: bool = True,
+        mode: PermissionMode = PermissionMode.DEFAULT,
     ) -> None:
         self._rules = rules or []
         self._ask_fn = ask_fn
@@ -168,6 +184,7 @@ class PermissionChecker:
         self._denial_tracker = DenialTracker()
         self._use_ml_classifier = use_ml_classifier
         self._ml_classifier: CommandClassifier | None = None
+        self._mode = mode
 
         if use_ml_classifier:
             from .command_classifier import CommandClassifier
@@ -176,6 +193,16 @@ class PermissionChecker:
     @property
     def denial_tracker(self) -> DenialTracker:
         return self._denial_tracker
+
+    @property
+    def mode(self) -> PermissionMode:
+        return self._mode
+
+    def set_mode(self, mode: PermissionMode) -> PermissionMode:
+        """Switch permission posture at runtime. Returns the previous mode."""
+        old = self._mode
+        self._mode = mode
+        return old
 
     def add_rule(self, rule: PermissionRule) -> None:
         """Add a permission rule (prepended = highest priority)."""
@@ -191,12 +218,12 @@ class PermissionChecker:
 
         Returns PermissionResult with behavior = ALLOW, ASK, or DENY.
         """
-        # 1. Check custom rules first
+        # 1. Custom rules always win (user-defined beats mode)
         rule_result = self._check_rules(tool_name, tool_input)
         if rule_result is not None:
             return rule_result
 
-        # 2. Read-only tools: always allow
+        # 2. Read-only tools: always allow (applies even in PLAN mode)
         if self._auto_allow_reads and tool_name in ALWAYS_ALLOW_TOOLS:
             return PermissionResult(
                 behavior=PermissionBehavior.ALLOW,
@@ -205,7 +232,35 @@ class PermissionChecker:
                 tool_input=tool_input,
             )
 
-        # 3. Write tools: ask
+        # 3. Mode-based short-circuits for anything that isn't a silent read
+        if self._mode == PermissionMode.BYPASS:
+            return PermissionResult(
+                behavior=PermissionBehavior.ALLOW,
+                reason="Bypass mode — all tools auto-approved",
+                tool_name=tool_name, tool_input=tool_input,
+            )
+
+        if self._mode == PermissionMode.PLAN:
+            # Plan mode = research only. Writes, edits, and bash are blocked.
+            if tool_name in ASK_TOOLS or tool_name == "bash":
+                return PermissionResult(
+                    behavior=PermissionBehavior.DENY,
+                    reason=(
+                        "Plan mode is read-only — propose the change in your "
+                        "plan and exit plan mode (/perm default or "
+                        "/perm acceptEdits) before executing."
+                    ),
+                    tool_name=tool_name, tool_input=tool_input,
+                )
+
+        if self._mode == PermissionMode.ACCEPT_EDITS and tool_name in ASK_TOOLS:
+            return PermissionResult(
+                behavior=PermissionBehavior.ALLOW,
+                reason="Accept-edits mode — file writes auto-approved",
+                tool_name=tool_name, tool_input=tool_input,
+            )
+
+        # 4. Default tool classification
         if tool_name in ASK_TOOLS:
             return PermissionResult(
                 behavior=PermissionBehavior.ASK,
@@ -214,11 +269,11 @@ class PermissionChecker:
                 tool_input=tool_input,
             )
 
-        # 4. Bash: analyze command
+        # 5. Bash: analyze command (mode may still coarsen — handled above)
         if tool_name == "bash":
             return self._check_bash(tool_input)
 
-        # 5. Unknown tool: ask
+        # 6. Unknown tool: ask
         return PermissionResult(
             behavior=PermissionBehavior.ASK,
             reason=f"Unknown tool: {tool_name}",

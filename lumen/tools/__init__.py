@@ -14,6 +14,9 @@ from .web_search import WebSearchTool
 from .web_fetch import WebFetchTool
 from .lsp import LSPTool
 from .subagent_tool import SubAgentTool
+from .task_tools import TaskListTool, TaskOutputTool, TaskStopTool, TaskWaitTool
+from .mcp_tool import MCPToolBridge
+from .discovery_tools import ToolSearchTool, BriefTool
 from .approval import (
     RequestApprovalTool, ConsoleApprovalHandler,
     ApprovalHandler, ApprovalPhase, ApprovalResponse,
@@ -35,6 +38,13 @@ __all__ = [
     "WebFetchTool",
     "LSPTool",
     "SubAgentTool",
+    "TaskListTool",
+    "TaskOutputTool",
+    "TaskStopTool",
+    "TaskWaitTool",
+    "MCPToolBridge",
+    "ToolSearchTool",
+    "BriefTool",
     "RequestApprovalTool",
     "ConsoleApprovalHandler",
     "ApprovalHandler",
