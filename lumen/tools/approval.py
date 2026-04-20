@@ -67,8 +67,28 @@ _SKIP_WORDS = {"skip", "全部写完", "write all"}
 _REJECT_WORDS = {"n", "no", "reject"}
 
 
+import re as _re
+
+_LONE_SURROGATE_RE = _re.compile(r"[\ud800-\udfff]")
+
+
+def _safe_text(s: str) -> str:
+    """Strip lone UTF-16 surrogates that break UTF-8 encoding (arise when a
+    streamed chunk splits a multi-unit character). Round-trip encode/decode
+    with 'replace' as a fallback."""
+    if not s:
+        return s
+    cleaned = _LONE_SURROGATE_RE.sub("", s)
+    try:
+        cleaned.encode("utf-8", "strict")
+        return cleaned
+    except UnicodeEncodeError:
+        return cleaned.encode("utf-8", "replace").decode("utf-8", "replace")
+
+
 def _truncate(content: str, head: int = 40, tail: int = 20, limit: int = 80) -> str:
     """If content exceeds `limit` lines, show head + elision + tail."""
+    content = _safe_text(content)
     lines = content.splitlines()
     if len(lines) <= limit:
         return content
@@ -122,7 +142,7 @@ class ConsoleApprovalHandler:
         console = self._console or Console()
         border = _PHASE_BORDER.get(phase, "white")
         badge = f"⚑ {_PHASE_LABEL[phase]}"
-        panel_title = f"[{border}]{badge}[/{border}] — {title}"
+        panel_title = f"[{border}]{badge}[/{border}] — {_safe_text(title)}"
         body = _truncate(content)
         console.print(Panel(body, title=panel_title, border_style=border))
 

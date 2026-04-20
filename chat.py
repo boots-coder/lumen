@@ -728,7 +728,15 @@ def _safe_text(s: str) -> str:
     console writer."""
     if not s:
         return s
-    return _LONE_SURROGATE_RE.sub("", s)
+    # Fast path: regex strip of the surrogate range.
+    cleaned = _LONE_SURROGATE_RE.sub("", s)
+    # Belt-and-braces: round-trip through utf-8 with 'replace' so any
+    # remaining unencodable code points become '?' instead of crashing.
+    try:
+        cleaned.encode("utf-8", "strict")
+        return cleaned
+    except UnicodeEncodeError:
+        return cleaned.encode("utf-8", "replace").decode("utf-8", "replace")
 
 
 def render_user_message(text_value: str) -> Panel:
@@ -1828,7 +1836,7 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
         arg_hint = ""
         for key in ("file_path", "command", "pattern"):
             if key in tool_input:
-                val = str(tool_input[key])
+                val = _safe_text(str(tool_input[key]))
                 arg_hint = f"  {val[:80]}{'…' if len(val)>80 else ''}"
                 break
 
@@ -1836,7 +1844,7 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
         with _LivePause():
             console.print()
             console.print(Panel(
-                t("permission.panel_body", tool=tool_name, hint=arg_hint),
+                _safe_text(t("permission.panel_body", tool=tool_name, hint=arg_hint)),
                 title=t("permission.panel_title"), title_align="left",
                 border_style="yellow",
             ))
@@ -2190,6 +2198,16 @@ async def main_async(
 
 
 def main() -> None:
+    # Make stdout/stderr surrogate-safe so lone UTF-16 surrogates produced by
+    # streaming chunk splits never crash the terminal writer. Replaces any
+    # unencodable code point with '?' at the final write instead of raising
+    # UnicodeEncodeError from deep inside rich/Live/Panel render paths.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     import argparse
     parser = argparse.ArgumentParser(description=t("cli.description"))
     parser.add_argument("--model",    default=None, help=t("cli.arg.model"))
