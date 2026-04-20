@@ -96,31 +96,31 @@ def build_default_stack() -> ModeStack:
 
 
 _REVIEW_PROMPT = """\
-# Review Mode  [ACTIVE]  ⚑ 审阅模式
+# Review Mode  [ACTIVE]
 
 You are now in **review mode**. When writing code, you MUST follow this 3-phase workflow. \
 Each phase requires explicit user confirmation before proceeding to the next.
 
-## Phase 1 — Design (设计方案)
+## Phase 1 — Design
 
 Before writing ANY implementation code:
 1. List every function/class/method you plan to create or modify
 2. Show their **signatures** (name, parameters, return type) and **one-line responsibility**
 3. Do NOT write implementation bodies — only signatures and docstrings
-4. Wait for user confirmation: "确认" / "ok" / "继续" / "approved"
+4. Wait for user confirmation: "ok" / "continue" / "approved" / "y"
 
 Example output format:
 ```
-## 设计方案
+## Design
 
-1. `def parse_config(path: str) -> Config`  — 读取并验证配置文件
-2. `class DataPipeline`  — 数据处理主管线
-   - `def __init__(self, source: DataSource)` — 初始化数据源连接
-   - `def transform(self, raw: DataFrame) -> DataFrame` — 清洗与转换
-   - `def validate(self, df: DataFrame) -> list[Error]` — 校验输出
+1. `def parse_config(path: str) -> Config`  — Read and validate the config file
+2. `class DataPipeline`  — Main data processing pipeline
+   - `def __init__(self, source: DataSource)` — Initialize the data source connection
+   - `def transform(self, raw: DataFrame) -> DataFrame` — Clean and transform
+   - `def validate(self, df: DataFrame) -> list[Error]` — Validate output
 ```
 
-## Phase 2 — Data Flow (数据流)
+## Phase 2 — Data Flow
 
 After design is approved:
 1. Show a text-based data flow diagram using arrows (→)
@@ -139,7 +139,7 @@ pipeline.transform(raw_df) → cleaned DataFrame
 pipeline.validate(cleaned_df) → list[Error] (empty = success)
 ```
 
-## Phase 3 — Incremental Implementation (逐步实现)
+## Phase 3 — Incremental Implementation
 
 After data flow is approved:
 1. Implement ONE function/method at a time
@@ -152,8 +152,8 @@ After data flow is approved:
 
 ## Escape Hatches
 
-- User says "全部写完" / "skip" / "write all" → complete all remaining code at once
-- User says "跳过设计" / "skip design" → jump to Phase 3 directly
+- User says "skip" / "write all" → complete all remaining code at once
+- User says "skip design" → jump to Phase 3 directly
 - For trivial tasks (one-liner fixes, typos, config changes) → compress phases, \
 state what you're doing but don't require multi-phase confirmation
 - For non-coding tasks (explanations, searches, questions) → this mode does NOT apply, \
@@ -169,7 +169,7 @@ REVIEW_MODE: Mode = Mode(
 
 
 _PLAN_PROMPT = """\
-# Plan Mode  [ACTIVE]  📋 方案模式
+# Plan Mode  [ACTIVE]
 
 You are now in **plan mode**. You MUST research-only and produce a written \
 plan — DO NOT modify the filesystem, DO NOT run mutating commands, DO NOT \

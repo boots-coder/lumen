@@ -16,7 +16,7 @@ Each user command file must expose a module-level `COMMAND: SlashCommand`.
 
     COMMAND = SlashCommand(
         name="/greet",
-        description="打招呼",
+        description="Greet",
         handler=_handle,
     )
 
@@ -32,7 +32,7 @@ import importlib.util
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Union
 
 
 @dataclass
@@ -62,13 +62,27 @@ CommandHandler = Callable[[ChatContext, str], Awaitable[CommandResult]]
 @dataclass
 class SlashCommand:
     name: str                                    # "/help" (include the slash)
-    description: str
+    description: Union[str, Callable[[], str]]   # string or zero-arg factory (for i18n)
     handler: CommandHandler
     aliases: tuple[str, ...] = ()                # e.g. ("/q", "/exit")
-    subargs: tuple[tuple[str, str], ...] = ()    # (arg, meta) for completion
+    # (arg, meta) pairs for completion. `meta` may be str or a zero-arg factory
+    # so descriptions track runtime language changes.
+    subargs: tuple[tuple[str, Union[str, Callable[[], str]]], ...] = ()
 
     def matches(self, token: str) -> bool:
         return token == self.name or token in self.aliases
+
+    def description_text(self) -> str:
+        """Resolve description to a plain string (calls factory if needed)."""
+        d = self.description
+        return d() if callable(d) else d
+
+    def subarg_items(self) -> list[tuple[str, str]]:
+        """Resolve subargs to (arg, meta-string) pairs."""
+        out: list[tuple[str, str]] = []
+        for arg, meta in self.subargs:
+            out.append((arg, meta() if callable(meta) else meta))
+        return out
 
 
 class CommandRegistry:
@@ -120,5 +134,9 @@ class CommandRegistry:
                     self.register(cmd, override=True)
                     loaded.append(cmd.name)
             except Exception as e:
-                print(f"  ⚠ 用户命令 {py_file.name} 加载失败: {e}")
+                try:
+                    from lumen.i18n import t
+                    print(t("msg.user_cmd_load_failed", file=py_file.name, err=e))
+                except Exception:
+                    print(f"  \u26a0 user command {py_file.name} failed to load: {e}")
         return loaded

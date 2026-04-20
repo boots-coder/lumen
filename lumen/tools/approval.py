@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from ..i18n import t
 from .base import Tool, ToolResult
 
 
@@ -96,9 +97,7 @@ class ConsoleApprovalHandler:
         content: str,
     ) -> ApprovalResponse:
         self._render_panel(phase, title, content)
-        answer = await self._prompt(
-            "回车=通过  n=驳回  skip=全部通过  (或直接输入反馈) › "
-        )
+        answer = await self._prompt(t("approval.prompt"))
         return await self._interpret(answer)
 
     # ── Rendering ────────────────────────────────────────────────────────────
@@ -160,7 +159,7 @@ class ConsoleApprovalHandler:
             return ApprovalResponse(approved=True, skip_remaining=True)
 
         if lowered in _REJECT_WORDS:
-            feedback = await self._prompt("反馈 › ")
+            feedback = await self._prompt(t("approval.feedback_prompt"))
             if feedback == "__cancelled__":
                 feedback = "user cancelled"
             return ApprovalResponse(

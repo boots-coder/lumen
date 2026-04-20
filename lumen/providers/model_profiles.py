@@ -1,15 +1,15 @@
 """
 Model Profile Registry — dynamic tool format adaptation for any model.
 
-核心设计思想：
-  用户不需要查阅每个模型的技术文档。
-  框架自动检测模型家族，注入对应的工具格式适配器。
+Core design philosophy:
+  Users don't need to consult the technical documentation of each model.
+  The framework auto-detects the model family and injects the corresponding tool format adapter.
 
   Model name → ModelProfile → ToolAdapter
                              → ResponseParser
                              → Capabilities
 
-每个模型家族在预训练阶段用了不同的工具格式：
+Each model family was pretrained with a different tool format:
   - OpenAI GPT: function calling (JSON string arguments)
   - Anthropic Claude: tool_use content blocks
   - DeepSeek: OpenAI-compat + <｜tool▁call▁begin｜> special tokens
@@ -19,11 +19,11 @@ Model Profile Registry — dynamic tool format adaptation for any model.
   - GLM-4: custom protocol
   - Gemini: Google's function_call format
 
-框架负责：
-  1. 从 model name 自动识别家族
-  2. 选择该家族最优的 tool schema 格式
-  3. 正确解析该家族的 tool call 响应
-  4. 用户可以动态注册新模型 profile
+The framework is responsible for:
+  1. Auto-identifying the family from the model name
+  2. Selecting the optimal tool schema format for that family
+  3. Correctly parsing the tool call responses from that family
+  4. Allowing users to dynamically register new model profiles
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Tool Schema Format — 模型预训练时用的工具描述格式
+# Tool Schema Format — the tool description format used when the model was pretrained
 # ═════════════════════════════════════════════════════════════════════════════
 
 class ToolSchemaFormat(str, Enum):
@@ -78,7 +78,7 @@ class ModelCapabilities:
     max_tools: int = 128                # Max number of tools in one request
     requires_alternating_roles: bool = False  # Anthropic requires this
     system_role_name: str = "system"    # "system" or "developer" (o1)
-    # 预训练特性
+    # Pretraining characteristics
     native_tool_tokens: bool = False    # Model was pretrained with tool tokens
     tool_token_prefix: str | None = None  # e.g. "<|python_tag|>" for Llama
     # Extended thinking / reasoning support

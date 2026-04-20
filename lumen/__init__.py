@@ -51,6 +51,9 @@ from .context.modes import Mode, ModeStack, REVIEW_MODE, build_default_stack
 # Utils
 from .utils.file_state_cache import FileStateCache
 
+# i18n (runtime English/Chinese switching for the chat UI)
+from . import i18n as i18n
+
 __all__ = [
     "Agent",
     "Session",
@@ -139,6 +142,8 @@ __all__ = [
     "build_default_stack",
     # Utils
     "FileStateCache",
+    # i18n
+    "i18n",
 ]
 
 __version__ = "0.5.0"

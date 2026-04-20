@@ -1,37 +1,39 @@
-# Lumen — 模型无关的 AI 编码 Agent SDK
+**English** | [中文](README.zh.md)
 
-> **一行命令，让任意大模型成为你的代码架构师**
+# Lumen — A Model-Agnostic AI Coding Agent SDK
 
-Lumen 是一个模型无关、生产级的 AI 编码 Agent 框架（Python 3.11+）。提供 API Key + 模型名，即可获得一个能够深入阅读、编写和分析代码的 AI 助手。支持 OpenAI、Anthropic、DeepSeek、Ollama 等任意兼容 OpenAI 协议的大模型。
+> **One command turns any LLM into your code architect.**
+
+Lumen is a model-agnostic, production-grade AI coding agent framework (Python 3.11+). Give it an API key and a model name, and you get an AI assistant that can deeply read, write, and analyze code. Works with OpenAI, Anthropic, DeepSeek, Ollama, and any OpenAI-compatible LLM.
 
 <div align="center">
-  <img src="展示.gif" alt="Lumen 运行演示" width="800"/>
+  <img src="展示.gif" alt="Lumen demo" width="800"/>
 </div>
 
 ---
 
-## 特性一览
+## Features at a glance
 
-- **模型无关** — OpenAI / Anthropic / DeepSeek / Ollama / 任意 OpenAI 兼容 API，一行切换
-- **13 个内置工具** — 文件读写、代码搜索、Shell 执行、Web 搜索/抓取、LSP 代码智能、子代理
-- **Extended Thinking** — 支持 Anthropic thinking blocks / OpenAI reasoning_effort / 通用 CoT，预算自适应
-- **Prompt Cache** — Anthropic 原生 `cache_control` + 通用 hash-based 缓存，自动降低 API 开销
-- **结构化输出** — JSON Schema 强制输出，适配 OpenAI / Anthropic / Gemini，Pydantic 验证
-- **智能权限控制** — 特征评分命令分类器 + regex 双引擎，五级风险等级，可解释
-- **动态会话记忆** — LLM 自动提取关键事实，TF-IDF 检索，无需向量数据库
-- **自动上下文压缩** — 接近窗口上限时自动压缩对话历史，无缝继续
-- **技能系统** — 可复用的任务模板，支持 JSON/YAML 定义和模糊搜索
-- **持久化重试** — 阶梯式模型升级 + Webhook 告警，适用于 CI/批处理场景
-- **生命周期钩子** — pre/post tool hooks，支持拦截、修改和补救
-- **对话自动持久化** — JSONL 追加写入，crash-safe，支持 `/resume` 恢复历史会话
-- **子代理系统** — 父代理可 spawn 子代理执行独立任务，支持同步/异步模式，abort 联动
+- **Model-agnostic** — OpenAI / Anthropic / DeepSeek / Ollama / any OpenAI-compatible API, swap with a single line
+- **13 built-in tools** — file read/write, code search, shell execution, web search/fetch, LSP code intelligence, sub-agents
+- **Extended Thinking** — Anthropic thinking blocks / OpenAI `reasoning_effort` / generic CoT, with adaptive budgeting
+- **Prompt Cache** — native Anthropic `cache_control` plus a generic hash-based cache; automatically reduces API cost
+- **Structured output** — JSON Schema-enforced output for OpenAI / Anthropic / Gemini, validated via Pydantic
+- **Smart permission control** — feature-scored command classifier plus regex dual engine, five risk levels, fully explainable
+- **Dynamic session memory** — LLM auto-extracts key facts, TF-IDF retrieval, no vector database required
+- **Automatic context compaction** — compresses conversation history as the window fills up, continues seamlessly
+- **Skill system** — reusable task templates, defined in JSON/YAML with fuzzy search
+- **Persistent retry** — tiered model escalation plus webhook alerts, designed for CI / batch workloads
+- **Lifecycle hooks** — pre/post tool hooks for interception, mutation, and remediation
+- **Auto-persisted transcripts** — JSONL append-only, crash-safe, resume past sessions with `/resume`
+- **Sub-agent system** — parent agents can spawn sub-agents for independent tasks, sync/async modes, linked aborts
 
 ---
 
-## 快速开始
+## Quick start
 
 ```bash
-# 克隆项目，创建环境，一键运行
+# Clone, create an env, and run
 git clone https://github.com/boots-coder/lumen.git
 cd lumen
 conda create -n lumen python=3.11 -y && conda activate lumen
@@ -39,7 +41,7 @@ pip install httpx pydantic pydantic-settings tiktoken anyio rich prompt_toolkit 
 python chat.py
 ```
 
-或者跳过向导直接启动：
+Or skip the wizard and launch directly:
 
 ```bash
 # OpenAI
@@ -48,104 +50,104 @@ python chat.py --model gpt-4o --api-key sk-proj-...
 # Anthropic
 python chat.py --model claude-sonnet-4-6 --api-key sk-ant-...
 
-# 本地 Ollama（无需 Key）
+# Local Ollama (no key needed)
 python chat.py --model llama3.1 --base-url http://localhost:11434/v1
 ```
 
 ---
 
-## 项目结构
+## Project structure
 
 ```
 lumen/
-├── chat.py                        # 主入口 — 交互式终端 UI
-├── lumen/                         # 核心 SDK
-│   ├── agent.py                   # Agent 主类（公开 API）
-│   ├── _types.py                  # 数据类型定义
+├── chat.py                        # Main entry — interactive terminal UI
+├── lumen/                         # Core SDK
+│   ├── agent.py                   # Agent main class (public API)
+│   ├── _types.py                  # Data type definitions
 │   ├── context/
-│   │   ├── session.py             # 会话管理 + Token 计数
-│   │   ├── session_memory.py      # 动态会话记忆（TF-IDF 检索）
-│   │   ├── transcript.py          # 对话自动持久化（JSONL）
-│   │   ├── system_prompt.py       # 系统 Prompt 分层构建
-│   │   ├── memory.py              # ENGRAM.md 记忆文件发现与加载
-│   │   ├── project_scanner.py     # 项目自动扫描
-│   │   └── git_state.py           # Git 状态快照注入
+│   │   ├── session.py             # Session management + token counting
+│   │   ├── session_memory.py      # Dynamic session memory (TF-IDF retrieval)
+│   │   ├── transcript.py          # Auto-persisted transcripts (JSONL)
+│   │   ├── system_prompt.py       # Layered system prompt builder
+│   │   ├── memory.py              # ENGRAM.md discovery and loading
+│   │   ├── project_scanner.py     # Automatic project scan
+│   │   └── git_state.py           # Git state snapshot injection
 │   ├── compact/
-│   │   ├── compactor.py           # 上下文压缩引擎
-│   │   ├── auto_compact.py        # 自动压缩触发逻辑
-│   │   └── prompt.py              # 压缩 Prompt 模板
+│   │   ├── compactor.py           # Context compaction engine
+│   │   ├── auto_compact.py        # Auto-compaction trigger logic
+│   │   └── prompt.py              # Compaction prompt template
 │   ├── tools/
-│   │   ├── file_read.py           # 文件内容读取
-│   │   ├── file_write.py          # 文件创建
-│   │   ├── file_edit.py           # 文件编辑（行级替换）
-│   │   ├── tree.py                # 目录树工具
-│   │   ├── definitions.py         # 代码符号提取
-│   │   ├── glob.py                # 文件模式匹配
-│   │   ├── grep.py                # ripgrep 内容搜索
-│   │   ├── bash.py                # Shell 命令执行
-│   │   ├── web_search.py          # Web 搜索（DuckDuckGo）
-│   │   ├── web_fetch.py           # 网页抓取 + 文本提取
-│   │   ├── lsp.py                 # LSP 代码智能
-│   │   └── subagent_tool.py       # 子代理工具
+│   │   ├── file_read.py           # File content reading
+│   │   ├── file_write.py          # File creation
+│   │   ├── file_edit.py           # File edits (line-level replace)
+│   │   ├── tree.py                # Directory tree tool
+│   │   ├── definitions.py         # Code symbol extraction
+│   │   ├── glob.py                # File pattern matching
+│   │   ├── grep.py                # ripgrep content search
+│   │   ├── bash.py                # Shell command execution
+│   │   ├── web_search.py          # Web search (DuckDuckGo)
+│   │   ├── web_fetch.py           # Web fetch + text extraction
+│   │   ├── lsp.py                 # LSP code intelligence
+│   │   └── subagent_tool.py       # Sub-agent tool
 │   ├── providers/
-│   │   ├── openai_compat.py       # OpenAI 兼容协议
-│   │   ├── anthropic.py           # Anthropic 原生 API
-│   │   ├── model_profiles.py      # 模型能力画像（自动适配）
-│   │   └── factory.py             # Provider 自动检测
+│   │   ├── openai_compat.py       # OpenAI-compatible protocol
+│   │   ├── anthropic.py           # Anthropic native API
+│   │   ├── model_profiles.py      # Model capability profiles (auto-adapt)
+│   │   └── factory.py             # Provider auto-detection
 │   ├── services/
-│   │   ├── thinking.py            # Extended Thinking 控制
-│   │   ├── prompt_cache.py        # Prompt 缓存管理
-│   │   ├── structured_output.py   # 结构化输出
-│   │   ├── command_classifier.py  # 命令安全分类器
-│   │   ├── skills.py              # 技能系统
-│   │   ├── persistent_retry.py    # 持久化重试
-│   │   ├── permissions.py         # 权限系统
-│   │   ├── hooks.py               # 生命周期钩子
-│   │   ├── retry.py               # 标准重试（指数退避）
-│   │   ├── tool_executor.py       # 并发工具执行
-│   │   ├── lsp.py                 # LSP 客户端
-│   │   ├── subagent.py            # 子代理管理器
-│   │   └── abort.py               # 取消控制
+│   │   ├── thinking.py            # Extended Thinking control
+│   │   ├── prompt_cache.py        # Prompt cache management
+│   │   ├── structured_output.py   # Structured output
+│   │   ├── command_classifier.py  # Command safety classifier
+│   │   ├── skills.py              # Skill system
+│   │   ├── persistent_retry.py    # Persistent retry
+│   │   ├── permissions.py         # Permission system
+│   │   ├── hooks.py               # Lifecycle hooks
+│   │   ├── retry.py               # Standard retry (exponential backoff)
+│   │   ├── tool_executor.py       # Concurrent tool execution
+│   │   ├── lsp.py                 # LSP client
+│   │   ├── subagent.py            # Sub-agent manager
+│   │   └── abort.py               # Cancellation control
 │   └── tokens/
-│       └── counter.py             # Token 计数
-├── examples/                      # 示例代码
-└── tests/                         # 测试
+│       └── counter.py             # Token counting
+├── examples/                      # Example code
+└── tests/                         # Tests
 ```
 
 ---
 
-## 核心功能
+## Core capabilities
 
-### 工具链（AI 自主调用）
+### Tool suite (invoked autonomously by the model)
 
-| 工具 | 作用 |
-|------|------|
-| `read_file` | 按行读取文件内容，支持 offset + limit 分页 |
-| `write_file` | 创建新文件 |
-| `edit_file` | 编辑已有文件（行级替换） |
-| `tree` | 展示项目目录结构（自动过滤 node_modules 等） |
-| `definitions` | 提取文件中所有类/函数/方法及其行号 |
-| `glob` | 按模式匹配文件路径，按修改时间排序 |
-| `grep` | ripgrep 正则搜索，三种输出模式 |
-| `bash` | 执行 Shell 命令 |
-| `web_search` | DuckDuckGo 搜索（无需 API Key） |
-| `web_fetch` | 抓取网页并提取可读文本 |
-| `lsp` | LSP 代码智能：跳转定义/查找引用/悬停信息/符号搜索 |
-| `sub_agent` | 生成子代理执行独立任务（需 `enable_subagents()`） |
+| Tool | Purpose |
+|------|---------|
+| `read_file` | Read file content by line, with `offset` + `limit` pagination |
+| `write_file` | Create a new file |
+| `edit_file` | Edit an existing file (line-level replacement) |
+| `tree` | Render the project directory (auto-filters `node_modules` etc.) |
+| `definitions` | Extract every class / function / method from a file with line numbers |
+| `glob` | Match file paths by pattern, sorted by modification time |
+| `grep` | ripgrep-powered regex search with three output modes |
+| `bash` | Execute shell commands |
+| `web_search` | DuckDuckGo search (no API key required) |
+| `web_fetch` | Fetch a web page and extract readable text |
+| `lsp` | LSP code intelligence: go-to-definition / find-references / hover / symbol search |
+| `sub_agent` | Spawn a sub-agent for an independent task (requires `enable_subagents()`) |
 
 ### Extended Thinking
 
-三种策略自动适配不同模型：
+Three strategies automatically adapt to different models:
 
-| 模型家族 | 实现方式 |
-|---------|---------|
+| Model family | Mechanism |
+|--------------|-----------|
 | Anthropic | `thinking: {"type": "enabled", "budget_tokens": N}` |
 | OpenAI o-series | `reasoning_effort: "low"/"medium"/"high"` |
-| 其他模型 | 系统 Prompt 注入 CoT 指令 |
+| Other models | CoT instructions injected via the system prompt |
 
-思考预算会根据上下文占用率自动调整 — 上下文快满时自动缩减，为实际响应让出空间。
+The thinking budget adapts to context usage — as the window fills up, it shrinks automatically to leave room for the actual response.
 
-### 结构化输出
+### Structured output
 
 ```python
 from pydantic import BaseModel
@@ -155,86 +157,86 @@ class CodeAnalysis(BaseModel):
     issues: list[str]
     suggestions: list[str]
 
-result = await agent.query("分析这段代码", schema=CodeAnalysis)
-# result 是一个验证通过的 CodeAnalysis 实例
+result = await agent.query("Analyze this code", schema=CodeAnalysis)
+# result is a validated CodeAnalysis instance
 ```
 
-支持 OpenAI `json_schema` / Anthropic tool-use trick / Gemini / 通用 JSON mode。
+Supports OpenAI `json_schema` / Anthropic tool-use trick / Gemini / generic JSON mode.
 
-### 命令安全分类器
+### Command safety classifier
 
-用特征评分替代纯 regex，四维加权分析：
+Replaces pure regex with feature scoring — a weighted analysis across four dimensions:
 
-- **可执行文件** (权重 0.4) — `rm` 0.7, `sudo` 0.9, `ls` 0.0
-- **命令标志** (权重 0.2) — `-rf` 0.8, `--force` 0.3, `--help` 0.0
-- **参数路径** (权重 0.1) — `/` 0.9, `/etc` 0.4, `./src` 0.0
-- **命令组合** (权重 0.3) — `curl | bash` 0.9, 子 shell 0.3
+- **Executable** (weight 0.4) — `rm` 0.7, `sudo` 0.9, `ls` 0.0
+- **Flags** (weight 0.2) — `-rf` 0.8, `--force` 0.3, `--help` 0.0
+- **Argument paths** (weight 0.1) — `/` 0.9, `/etc` 0.4, `./src` 0.0
+- **Command composition** (weight 0.3) — `curl | bash` 0.9, subshell 0.3
 
-上下文感知：`rm -f` 比单独的 `-f` 风险高得多。
+Context-aware: `rm -f` is much riskier than `-f` on its own.
 
-### 对话自动持久化
+### Auto-persisted transcripts
 
-每条消息自动追加到 JSONL 文件，crash-safe：
+Every message is appended to a JSONL file — crash-safe:
 
 ```
 ~/.lumen/projects/{project-path}/{session-id}.jsonl
 ```
 
-- **追加写入** — 100ms 缓冲，异步刷盘
-- **快速恢复** — 尾部 64KB 读取 metadata，`/resume` 一键恢复
-- **Session ID** — UUID 自动生成，启动时显示
+- **Append-only writes** — 100 ms buffer, async flush
+- **Fast recovery** — reads metadata from the tail 64 KB, `/resume` restores in one step
+- **Session ID** — UUID auto-generated, shown at startup
 
-### 子代理系统
+### Sub-agent system
 
-父代理可 spawn 独立子代理，实现任务并行化：
+A parent agent can spawn an isolated sub-agent to parallelize work:
 
 ```python
-agent.enable_subagents()  # 注册 sub_agent 工具
+agent.enable_subagents()  # Register the sub_agent tool
 
-# 或编程式使用
+# Or use it programmatically
 from lumen import SubAgentConfig
 result = await agent.subagent_manager.spawn(SubAgentConfig(
-    prompt="分析 auth 模块的安全性",
-    description="安全审计",
-    run_in_background=True,  # 后台异步执行
+    prompt="Audit the security of the auth module",
+    description="Security audit",
+    run_in_background=True,  # Run asynchronously in the background
 ))
 ```
 
-隔离策略：
-- **File Cache** — 克隆（无交叉污染）
-- **Abort** — 父子联动（父 abort → 子 abort，反之不影响）
-- **Session** — 独立对话历史
-- **Tools** — 继承或自定义
+Isolation policy:
+- **File cache** — cloned (no cross-contamination)
+- **Abort** — parent/child linked (parent abort cascades to child; child abort does not affect parent)
+- **Session** — independent conversation history
+- **Tools** — inherited or customized
 
-### 动态会话记忆
+### Dynamic session memory
 
-- 每 3 轮对话自动提取关键事实（偏好/项目/模式/纠正）
-- TF-IDF 关键词检索，无需向量数据库
-- Jaccard 相似度去重，JSON 文件持久化
-- 首轮自动注入相关记忆上下文
+- Every three turns, key facts (preferences / project / patterns / corrections) are auto-extracted
+- TF-IDF keyword retrieval — no vector database required
+- Jaccard similarity deduplication, persisted to a JSON file
+- Relevant memories are automatically injected on the first turn
 
-### 上下文管理
+### Context management
 
-- **自动 Token 计数**：每轮精确统计，实时显示进度条
-- **自动压缩**：接近上限时自动压缩历史为结构化摘要
-- **手动压缩 `/compact`**：随时触发，保留最近 N 条消息
+- **Automatic token counting**: precise per-turn counts with a live progress bar
+- **Automatic compaction**: when the window is nearly full, history is compacted into a structured summary
+- **Manual compaction `/compact`**: trigger any time, keeping the most recent N messages
 
-### 记忆系统（ENGRAM.md）
+### Memory system (ENGRAM.md)
 
-四级优先级自动发现与加载：
+Four priority levels, auto-discovered and loaded:
 
 ```
-/etc/lumen/ENGRAM.md      # 系统级（最低优先级）
-~/.engram/ENGRAM.md       # 用户级
-./ENGRAM.md               # 项目级（团队共享）
-./ENGRAM.local.md         # 本地私有（gitignore）
+/etc/lumen/ENGRAM.md      # System level (lowest priority)
+~/.engram/ENGRAM.md       # User level
+./ENGRAM.md               # Project level (team-shared)
+./ENGRAM.local.md         # Local private (gitignored)
 ```
 
 ---
 
-## SDK 用法
+## SDK usage
 
-### 基础用法
+### Basic usage
 
 ```python
 import asyncio
@@ -257,13 +259,13 @@ async def main():
         inject_git_state=True,
     )
 
-    response = await agent.chat("解释一下这个项目的整体架构")
+    response = await agent.chat("Explain the overall architecture of this project")
     print(response.content)
 
 asyncio.run(main())
 ```
 
-### 进阶：结构化输出 + Thinking
+### Advanced: structured output + Thinking
 
 ```python
 from lumen import Agent, ThinkingConfig, ThinkingMode
@@ -279,11 +281,11 @@ agent = Agent(
     ),
 )
 
-# 结构化查询
-result = await agent.query("列出所有 API 端点", schema=APIEndpoints)
+# Structured query
+result = await agent.query("List every API endpoint", schema=APIEndpoints)
 ```
 
-### 进阶：持久化重试（CI 场景）
+### Advanced: persistent retry (CI scenario)
 
 ```python
 from lumen import Agent, PersistentRetryConfig
@@ -303,75 +305,75 @@ agent = Agent(
 
 ---
 
-## Slash 命令
+## Slash commands
 
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示帮助 |
-| `/status` | Token 用量和会话信息 |
-| `/mode code` | 开启代码深读模式 |
-| `/mode general` | 切回通用模式 |
-| `/compact` | 手动压缩上下文 |
-| `/reset` | 清空对话历史 |
-| `/save` | 保存会话到 JSON 文件（对话已自动持久化） |
-| `/load` | 从 JSON 文件恢复会话 |
-| `/resume` | 列出最近会话，选择恢复 |
-| `/config` | 重新配置模型和 API Key |
-| `/quit` | 退出（或 Ctrl+D） |
-
----
-
-## 支持的模型
-
-| Provider | 示例模型 | 说明 |
-|----------|---------|------|
-| **OpenAI** | `gpt-4o`, `gpt-4o-mini`, `o3-mini`, `o1` | 自动处理推理模型的 API 差异 |
-| **Anthropic** | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5` | 原生 API + thinking blocks |
-| **DeepSeek** | `deepseek-chat`, `deepseek-reasoner` | OpenAI 兼容协议 |
-| **Ollama** | `llama3.1`, `qwen2.5`, `mistral`, `deepseek-r1` | 本地运行，无需 Key |
-| **其他** | 任意 OpenAI 兼容 API | 自定义 base_url |
+| Command | Description |
+|---------|-------------|
+| `/help` | Show help |
+| `/status` | Token usage and session info |
+| `/mode code` | Enter deep code-reading mode |
+| `/mode general` | Return to general mode |
+| `/compact` | Manually compact the context |
+| `/reset` | Clear conversation history |
+| `/save` | Save the session to a JSON file (transcripts are already auto-persisted) |
+| `/load` | Restore a session from a JSON file |
+| `/resume` | List recent sessions and pick one to resume |
+| `/config` | Reconfigure the model and API key |
+| `/quit` | Exit (or Ctrl+D) |
 
 ---
 
-## 功能截图
+## Supported models
 
-### 启动 & 项目结构阅读
-
-![项目结构阅读](1项目阅读-结构.png)
-
-### 核心功能模块精准定位
-
-![核心记忆管理模块](2核心功能模块-核心记忆管理.png)
-
-### 深度讲解具体代码文件
-
-![详细讲解 memory.py 类](3详细讲解mem类.png)
-
-### 逐行代码深度解析
-
-![逐行讲解代码](4深入讲解代码1.png)
-
-![代码深度解析续](4深入讲解代码续.png)
-
-![代码深度解析续续](4深入讲解代码续续.png)
-
-### 代码深读模式 `/mode code`
-
-![代码深度模式](扩展功能代码深度mode.png)
-
-![代码深度模式续](扩展功能代码深度mode续.png)
+| Provider | Example models | Notes |
+|----------|----------------|-------|
+| **OpenAI** | `gpt-4o`, `gpt-4o-mini`, `o3-mini`, `o1` | Auto-handles API differences for reasoning models |
+| **Anthropic** | `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5` | Native API + thinking blocks |
+| **DeepSeek** | `deepseek-chat`, `deepseek-reasoner` | OpenAI-compatible protocol |
+| **Ollama** | `llama3.1`, `qwen2.5`, `mistral`, `deepseek-r1` | Run locally, no key needed |
+| **Other** | Any OpenAI-compatible API | Custom `base_url` |
 
 ---
 
-## 环境要求
+## Screenshots
+
+### Startup and project structure reading
+
+![Project structure reading](1项目阅读-结构.png)
+
+### Pinpointing core functional modules
+
+![Core memory management module](2核心功能模块-核心记忆管理.png)
+
+### Deep walkthrough of a specific source file
+
+![Detailed walkthrough of memory.py](3详细讲解mem类.png)
+
+### Line-by-line code analysis
+
+![Line-by-line code walkthrough](4深入讲解代码1.png)
+
+![Code analysis continued](4深入讲解代码续.png)
+
+![Code analysis continued](4深入讲解代码续续.png)
+
+### Deep code-reading mode `/mode code`
+
+![Deep code mode](扩展功能代码深度mode.png)
+
+![Deep code mode continued](扩展功能代码深度mode续.png)
+
+---
+
+## Requirements
 
 - Python 3.11+
-- `ripgrep`（可选，grep 工具使用；`brew install ripgrep`）
-- API Key：OpenAI / Anthropic / DeepSeek，或本地 Ollama
+- `ripgrep` (optional, used by the grep tool; `brew install ripgrep`)
+- An API key for OpenAI / Anthropic / DeepSeek, or a local Ollama
 
-可选依赖：
-- `duckduckgo_search` — Web 搜索工具
-- `pyyaml` — YAML 格式的技能定义文件
+Optional dependencies:
+- `duckduckgo_search` — required for the web search tool
+- `pyyaml` — required for YAML-formatted skill definitions
 
 ---
 
