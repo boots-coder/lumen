@@ -165,7 +165,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tokenbar.review_impl": "review \u00b7 impl({n})",
         "tokenbar.review_complete": "review \u00b7 complete",
         "tokenbar.review_default": "review",
-        "tokenbar.plan_mode": "\ud83d\udccb Plan Mode",
+        "tokenbar.plan_mode": "\U0001f4cb Plan Mode",
 
         # ── mode switching ──────────────────────────────────────────────────
         "mode.review_label": "Review Mode",
@@ -197,7 +197,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "  \u00b7 Type any free text \u2192 treated as feedback and rejected\n\n"
             "  [dim]The token bar shows the current phase. Non-coding tasks are unaffected.[/]"
         ),
-        "mode.plan_panel_title": "\ud83d\udccb Plan Mode",
+        "mode.plan_panel_title": "\U0001f4cb Plan Mode",
         "mode.plan_panel_body": (
             "[bold blue]Plan Mode enabled \u2014 read-only research + structured plan[/]\n\n"
             "  This turn the model will only: [cyan]read_file \u00b7 glob \u00b7 tree \u00b7 grep[/]; no files are written.\n"
@@ -210,7 +210,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── /plan command ───────────────────────────────────────────────────
         "plan.on_title": "Plan Mode",
         "plan.active_body": (
-            "[bold blue]\ud83d\udccb Plan Mode is active[/]\n\n"
+            "[bold blue]\U0001f4cb Plan Mode is active[/]\n\n"
             "  \u00b7 [bold]/plan approve[/]  \u2192 approve plan, switch to acceptEdits and execute\n"
             "  \u00b7 [bold]/plan cancel[/]   \u2192 cancel, back to general mode"
         ),
@@ -277,7 +277,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "perm.switched": "\u2713 Permission mode set to [bold]{name}[/] \u2014 {desc}",
 
         # ── permission prompt (write/risky tool) ──────────────────────────
-        "permission.panel_title": "\ud83d\udd12 Confirmation required",
+        "permission.panel_title": "\U0001f512 Confirmation required",
         "permission.panel_body": "  Tool: [bold yellow]{tool}[/]\n{hint}",
         "permission.prompt": "  Allow? [Y/n] \u203a ",
 
@@ -419,10 +419,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "toolbar.review_impl": "impl\u00d7{n}",
         "toolbar.review_complete": "complete",
         "toolbar.mode_review": " \u2691 review \u00b7 {phase} ",
-        "toolbar.mode_plan": " \ud83d\udccb plan ",
+        "toolbar.mode_plan": " \U0001f4cb plan ",
         "toolbar.mode_general": " general ",
         "toolbar.perm_accept_edits": " \u270e accept-edits \u2502",
-        "toolbar.perm_plan": " \ud83d\udccb plan-only \u2502",
+        "toolbar.perm_plan": " \U0001f4cb plan-only \u2502",
         "toolbar.perm_bypass": " \u26a0 BYPASS \u2502",
         "toolbar.line": (
             " mode:{mode}\u2502{perm} \u21e7\u21e5 mode \u2502 / cmds \u2502 @ files \u2502 "
@@ -577,7 +577,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tokenbar.review_impl": "\u5ba1\u9605\u00b7\u5b9e\u73b0({n})",
         "tokenbar.review_complete": "\u5ba1\u9605\u00b7\u5b8c\u6210",
         "tokenbar.review_default": "\u5ba1\u9605",
-        "tokenbar.plan_mode": "\ud83d\udccb \u65b9\u6848\u6a21\u5f0f",
+        "tokenbar.plan_mode": "\U0001f4cb \u65b9\u6848\u6a21\u5f0f",
 
         # ── mode switching ──────────────────────────────────────────────────
         "mode.review_label": "\u5ba1\u9605\u6a21\u5f0f  [Review Mode]",
@@ -608,7 +608,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "  \u00b7 \u76f4\u63a5\u8f93\u5165\u4efb\u4f55\u6587\u5b57 \u2192 \u5f53\u4f5c\u53cd\u9988\u5e76\u6253\u56de\n\n"
             "  [dim]Token \u680f\u4f1a\u5b9e\u65f6\u663e\u793a\u5f53\u524d Phase\u3002\u975e\u7f16\u7801\u4efb\u52a1\u4e0d\u53d7\u5f71\u54cd\u3002[/]"
         ),
-        "mode.plan_panel_title": "\ud83d\udccb Plan Mode",
+        "mode.plan_panel_title": "\U0001f4cb Plan Mode",
         "mode.plan_panel_body": (
             "[bold blue]\u65b9\u6848\u6a21\u5f0f\u5df2\u5f00\u542f \u2014 \u53ea\u8bfb\u8c03\u7814 + \u7ed3\u6784\u5316\u65b9\u6848[/]\n\n"
             "  \u8fd9\u4e00\u8f6e AI \u53ea\u4f1a: [cyan]read_file \u00b7 glob \u00b7 tree \u00b7 grep[/]\uff0c\u4e0d\u4f1a\u5199\u4efb\u4f55\u6587\u4ef6\u3002\n"
@@ -621,7 +621,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ── /plan command ───────────────────────────────────────────────────
         "plan.on_title": "Plan Mode",
         "plan.active_body": (
-            "[bold blue]\ud83d\udccb Plan Mode \u5f53\u524d\u5f00\u542f[/]\n\n"
+            "[bold blue]\U0001f4cb Plan Mode \u5f53\u524d\u5f00\u542f[/]\n\n"
             "  \u00b7 [bold]/plan approve[/]  \u2192 \u786e\u8ba4\u65b9\u6848\uff0c\u5207\u5230 acceptEdits \u6267\u884c\n"
             "  \u00b7 [bold]/plan cancel[/]   \u2192 \u53d6\u6d88\uff0c\u56de\u5230\u901a\u7528\u6a21\u5f0f"
         ),
@@ -688,7 +688,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "perm.switched": "\u2713 \u6743\u9650\u6a21\u5f0f\u5207\u5230 [bold]{name}[/] \u2014 {desc}",
 
         # ── permission prompt (write/risky tool) ──────────────────────────
-        "permission.panel_title": "\ud83d\udd12 \u9700\u8981\u786e\u8ba4",
+        "permission.panel_title": "\U0001f512 \u9700\u8981\u786e\u8ba4",
         "permission.panel_body": "  \u5de5\u5177: [bold yellow]{tool}[/]\n{hint}",
         "permission.prompt": "  \u5141\u8bb8\u6267\u884c? [Y/n] \u203a ",
 
@@ -830,10 +830,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "toolbar.review_impl": "\u5b9e\u73b0\u00d7{n}",
         "toolbar.review_complete": "\u5b8c\u6210",
         "toolbar.mode_review": " \u2691 review \u00b7 {phase} ",
-        "toolbar.mode_plan": " \ud83d\udccb plan ",
+        "toolbar.mode_plan": " \U0001f4cb plan ",
         "toolbar.mode_general": " general ",
         "toolbar.perm_accept_edits": " \u270e accept-edits \u2502",
-        "toolbar.perm_plan": " \ud83d\udccb plan-only \u2502",
+        "toolbar.perm_plan": " \U0001f4cb plan-only \u2502",
         "toolbar.perm_bypass": " \u26a0 BYPASS \u2502",
         "toolbar.line": (
             " mode:{mode}\u2502{perm} \u21e7\u21e5 \u5207\u6a21\u5f0f \u2502 / \u547d\u4ee4 \u2502 @ \u6587\u4ef6 \u2502 "
