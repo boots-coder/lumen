@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import traceback
 from dataclasses import dataclass
@@ -438,6 +439,37 @@ class AgentConfig:
     base_url: str | None
     provider_name: str
     language: str = "en"
+    provider_id: str = ""  # Stable id (e.g. "getgoapi"); enables live re-translation
+
+
+def display_provider_name(config: AgentConfig) -> str:
+    """Return the provider's display name, translated live when the provider
+    is known by id. Falls back to whatever was stored in `provider_name`."""
+    pid = config.provider_id or _infer_provider_id(config.provider_name)
+    if pid:
+        for p in PROVIDERS:
+            if p.id == pid:
+                return p.display_name()
+    return config.provider_name
+
+
+def _infer_provider_id(stored_name: str) -> str:
+    """Best-effort recovery of a provider id from a legacy stored display name.
+    Matches against the EN + ZH translation of every provider's name."""
+    if not stored_name:
+        return ""
+    from lumen import i18n as _i18n
+    for p in PROVIDERS:
+        if not p.name.startswith("i18n:"):
+            if p.name == stored_name:
+                return p.id
+            continue
+        key = p.name[5:]
+        for lang in _i18n.SUPPORTED_LANGUAGES:
+            translated = _i18n.TRANSLATIONS.get(lang, {}).get(key)
+            if translated == stored_name:
+                return p.id
+    return ""
 
 
 # ── Config persistence ───────────────────────────────────────────────────────
@@ -458,6 +490,7 @@ def save_config(config: AgentConfig) -> None:
             "model": config.model,
             "base_url": config.base_url,
             "provider_name": config.provider_name,
+            "provider_id": config.provider_id,
             "language": config.language,
         }
         _CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -484,6 +517,7 @@ def load_config() -> AgentConfig | None:
             model=data["model"],
             base_url=data.get("base_url"),
             provider_name=data.get("provider_name") or "Saved",
+            provider_id=data.get("provider_id") or "",
             language=lang,
         )
     except Exception:
@@ -607,6 +641,7 @@ async def setup_wizard(pt: PromptSession) -> AgentConfig:
         model=model,
         base_url=base_url if provider.id != "custom" else (base_url or None),
         provider_name=provider.display_name(),
+        provider_id=provider.id,
         language=get_language(),
     )
 
@@ -683,20 +718,33 @@ def make_token_bar(agent: Agent) -> Panel:
     return Panel(Columns([progress, stats]), border_style=border, padding=(0, 1))
 
 
+_LONE_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
+
+def _safe_text(s: str) -> str:
+    """Strip lone UTF-16 surrogates that appear when streaming chunks split a
+    multi-unit character in half (common with emoji / CJK across chunk
+    boundaries). These codepoints are unencodable as UTF-8 and crash the
+    console writer."""
+    if not s:
+        return s
+    return _LONE_SURROGATE_RE.sub("", s)
+
+
 def render_user_message(text_value: str) -> Panel:
     return Panel(
-        Text(text_value, style="white"),
+        Text(_safe_text(text_value), style="white"),
         title=Text(t("msg.you"), style=C_USER),
         title_align="left", border_style="green", padding=(0, 1),
     )
 
 
 def render_system(text_value: str, style: str = C_DIM) -> None:
-    console.print(f"  {text_value}", style=style)
+    console.print(f"  {_safe_text(text_value)}", style=style)
 
 
 def render_error(text_value: str) -> None:
-    console.print(Panel(text_value, border_style="red", title="Error", title_align="left"))
+    console.print(Panel(_safe_text(text_value), border_style="red", title="Error", title_align="left"))
 
 
 def render_help(registry: "CommandRegistry | None" = None) -> None:
@@ -828,7 +876,10 @@ async def agent_response(agent: Agent, message: str) -> str:
             try:
                 async for chunk in agent.stream(message):
                     collected.append(chunk)
-                    md = Markdown("".join(collected), code_theme="monokai", inline_code_theme="monokai")
+                    md = Markdown(
+                        _safe_text("".join(collected)),
+                        code_theme="monokai", inline_code_theme="monokai",
+                    )
                     live.update(Panel(
                         md, title=panel_title, title_align="left",
                         border_style="blue", padding=(0, 1),
@@ -839,7 +890,7 @@ async def agent_response(agent: Agent, message: str) -> str:
         return "".join(collected)
 
     # ── Render the final answer ──────────────────────────────────────────────
-    final_text = response.content if response else ""
+    final_text = _safe_text(response.content if response else "")
     md = Markdown(final_text, code_theme="monokai", inline_code_theme="monokai")
     console.print(Panel(
         md,
@@ -1883,7 +1934,7 @@ async def chat_loop(config: AgentConfig, pt: PromptSession) -> bool:
     info = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
     info.add_column(style=C_DIM)
     info.add_column(style="white")
-    info.add_row(t("col.provider"),        config.provider_name)
+    info.add_row(t("col.provider"),        display_provider_name(config))
     info.add_row(t("col.model"),           agent.model)
     info.add_row(t("col.session_id"),      agent.session.session_id[:12] + "...")
     info.add_row(t("col.context_window"),  f"{agent.context_window:,} tokens")
@@ -2089,7 +2140,7 @@ async def main_async(
             info = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
             info.add_column(style=C_DIM)
             info.add_column(style="white")
-            info.add_row(t("col.provider"), saved.provider_name)
+            info.add_row(t("col.provider"), display_provider_name(saved))
             info.add_row(t("col.model"),    saved.model)
             if saved.base_url:
                 info.add_row(t("col.base_url"), saved.base_url)
