@@ -6,3 +6,7 @@ dist/
 build/
 .env
 .env.*
+
+# local runtime state
+.DS_Store
+.engram/

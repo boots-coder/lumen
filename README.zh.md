@@ -335,6 +335,20 @@ agent = Agent(
 
 ---
 
+## 示例项目
+
+### Pomodoro 番茄钟 — Review Mode 全流程生成
+
+一个纯 HTML/CSS/JS 的番茄钟:SVG 动画倒计时环、工作/休息时段自动切换、WebAudio 提示音、localStorage 持久化任务列表 —— 由 Lumen 调用 `gpt-4.1` 在 Review Mode 下端到端生成(设计 → 数据流 → 实现,三阶段间通过 `request_approval` 人工审批)。
+
+源码:[examples/pomodoro/](examples/pomodoro/)
+
+<div align="center">
+  <img src="examples/pomodoro/demo.gif" alt="Lumen 生成的 Pomodoro 演示" width="800"/>
+</div>
+
+---
+
 ## 功能截图
 
 ### 启动 & 项目结构阅读
