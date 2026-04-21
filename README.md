@@ -349,36 +349,6 @@ Source: [examples/pomodoro/](examples/pomodoro/)
 
 ---
 
-## Screenshots
-
-### Startup and project structure reading
-
-![Project structure reading](1项目阅读-结构.png)
-
-### Pinpointing core functional modules
-
-![Core memory management module](2核心功能模块-核心记忆管理.png)
-
-### Deep walkthrough of a specific source file
-
-![Detailed walkthrough of memory.py](3详细讲解mem类.png)
-
-### Line-by-line code analysis
-
-![Line-by-line code walkthrough](4深入讲解代码1.png)
-
-![Code analysis continued](4深入讲解代码续.png)
-
-![Code analysis continued](4深入讲解代码续续.png)
-
-### Deep code-reading mode `/mode code`
-
-![Deep code mode](扩展功能代码深度mode.png)
-
-![Deep code mode continued](扩展功能代码深度mode续.png)
-
----
-
 ## Requirements
 
 - Python 3.11+
