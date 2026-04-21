@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Pomodoro Timer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="center-container">
+    <div class="timer-container">
+      <svg class="timer-svg" width="180" height="180">
+        <circle class="timer-bg" cx="90" cy="90" r="80" fill="none" stroke="#232b37" stroke-width="14"/>
+        <circle id="timer-ring" cx="90" cy="90" r="80" fill="none" stroke="#00d9ff" stroke-width="14" stroke-linecap="round"/>
+      </svg>
+      <div id="timer-display" class="timer-display">25:00</div>
+      <div id="session-label" class="session-label">Work</div>
+    </div>
+    <div class="timer-controls">
+      <button id="start-btn">Start</button>
+      <button id="pause-btn">Pause</button>
+      <button id="reset-btn">Reset</button>
+    </div>
+    <div class="task-list-container">
+      <div class="task-input-row">
+        <input id="task-input" type="text" placeholder="Add a task..." maxlength="48">
+        <button id="add-task-btn">Add</button>
+      </div>
+      <div id="task-list" class="task-list"></div>
+    </div>
+  </div>
+  <script src="script.js"></script>
+  <script>
+    loadFontsAndTheme();
+    window.taskList = new TaskList('pomodoro-tasks');
+    taskList.load();
+    renderTaskList(taskList.getTasks());
+    window.pomodoro = new PomodoroTimer(
+      25 * 60,
+      (mm, ss, progress) => renderTimer(mm, ss, progress),
+      (isWork) => {
+        updateSessionUI(isWork);
+        if (!isWork) playBeep();
+      }
+    );
+    renderTimer(...Object.values(window.pomodoro.getTimeLeft()), window.pomodoro.getProgress());
+    updateSessionUI(true);
+    bindUIEvents();
+  </script>
+</body>
+</html>
