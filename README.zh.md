@@ -12,6 +12,20 @@ Lumen 是一个模型无关、生产级的 AI 编码 Agent 框架（Python 3.11+
 
 ---
 
+## 示例项目
+
+### Pomodoro 番茄钟 — Review Mode 全流程生成
+
+一个纯 HTML/CSS/JS 的番茄钟:SVG 动画倒计时环、工作/休息时段自动切换、WebAudio 提示音、localStorage 持久化任务列表 —— 由 Lumen 调用 `gpt-4.1` 在 Review Mode 下端到端生成(设计 → 数据流 → 实现,三阶段间通过 `request_approval` 人工审批)。
+
+源码:[examples/pomodoro/](examples/pomodoro/)
+
+<div align="center">
+  <img src="examples/pomodoro/demo.gif" alt="Lumen 生成的 Pomodoro 演示" width="800"/>
+</div>
+
+---
+
 ## 特性一览
 
 - **模型无关** — OpenAI / Anthropic / DeepSeek / Ollama / 任意 OpenAI 兼容 API，一行切换
@@ -52,66 +66,6 @@ python chat.py --model claude-sonnet-4-6 --api-key sk-ant-...
 
 # 本地 Ollama（无需 Key）
 python chat.py --model llama3.1 --base-url http://localhost:11434/v1
-```
-
----
-
-## 项目结构
-
-```
-lumen/
-├── chat.py                        # 主入口 — 交互式终端 UI
-├── lumen/                         # 核心 SDK
-│   ├── agent.py                   # Agent 主类（公开 API）
-│   ├── _types.py                  # 数据类型定义
-│   ├── context/
-│   │   ├── session.py             # 会话管理 + Token 计数
-│   │   ├── session_memory.py      # 动态会话记忆（TF-IDF 检索）
-│   │   ├── transcript.py          # 对话自动持久化（JSONL）
-│   │   ├── system_prompt.py       # 系统 Prompt 分层构建
-│   │   ├── memory.py              # ENGRAM.md 记忆文件发现与加载
-│   │   ├── project_scanner.py     # 项目自动扫描
-│   │   └── git_state.py           # Git 状态快照注入
-│   ├── compact/
-│   │   ├── compactor.py           # 上下文压缩引擎
-│   │   ├── auto_compact.py        # 自动压缩触发逻辑
-│   │   └── prompt.py              # 压缩 Prompt 模板
-│   ├── tools/
-│   │   ├── file_read.py           # 文件内容读取
-│   │   ├── file_write.py          # 文件创建
-│   │   ├── file_edit.py           # 文件编辑（行级替换）
-│   │   ├── tree.py                # 目录树工具
-│   │   ├── definitions.py         # 代码符号提取
-│   │   ├── glob.py                # 文件模式匹配
-│   │   ├── grep.py                # ripgrep 内容搜索
-│   │   ├── bash.py                # Shell 命令执行
-│   │   ├── web_search.py          # Web 搜索（DuckDuckGo）
-│   │   ├── web_fetch.py           # 网页抓取 + 文本提取
-│   │   ├── lsp.py                 # LSP 代码智能
-│   │   └── subagent_tool.py       # 子代理工具
-│   ├── providers/
-│   │   ├── openai_compat.py       # OpenAI 兼容协议
-│   │   ├── anthropic.py           # Anthropic 原生 API
-│   │   ├── model_profiles.py      # 模型能力画像（自动适配）
-│   │   └── factory.py             # Provider 自动检测
-│   ├── services/
-│   │   ├── thinking.py            # Extended Thinking 控制
-│   │   ├── prompt_cache.py        # Prompt 缓存管理
-│   │   ├── structured_output.py   # 结构化输出
-│   │   ├── command_classifier.py  # 命令安全分类器
-│   │   ├── skills.py              # 技能系统
-│   │   ├── persistent_retry.py    # 持久化重试
-│   │   ├── permissions.py         # 权限系统
-│   │   ├── hooks.py               # 生命周期钩子
-│   │   ├── retry.py               # 标准重试（指数退避）
-│   │   ├── tool_executor.py       # 并发工具执行
-│   │   ├── lsp.py                 # LSP 客户端
-│   │   ├── subagent.py            # 子代理管理器
-│   │   └── abort.py               # 取消控制
-│   └── tokens/
-│       └── counter.py             # Token 计数
-├── examples/                      # 示例代码
-└── tests/                         # 测试
 ```
 
 ---
@@ -332,20 +286,6 @@ agent = Agent(
 | **DeepSeek** | `deepseek-chat`, `deepseek-reasoner` | OpenAI 兼容协议 |
 | **Ollama** | `llama3.1`, `qwen2.5`, `mistral`, `deepseek-r1` | 本地运行，无需 Key |
 | **其他** | 任意 OpenAI 兼容 API | 自定义 base_url |
-
----
-
-## 示例项目
-
-### Pomodoro 番茄钟 — Review Mode 全流程生成
-
-一个纯 HTML/CSS/JS 的番茄钟:SVG 动画倒计时环、工作/休息时段自动切换、WebAudio 提示音、localStorage 持久化任务列表 —— 由 Lumen 调用 `gpt-4.1` 在 Review Mode 下端到端生成(设计 → 数据流 → 实现,三阶段间通过 `request_approval` 人工审批)。
-
-源码:[examples/pomodoro/](examples/pomodoro/)
-
-<div align="center">
-  <img src="examples/pomodoro/demo.gif" alt="Lumen 生成的 Pomodoro 演示" width="800"/>
-</div>
 
 ---
 
