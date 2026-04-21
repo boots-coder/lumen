@@ -51,7 +51,9 @@ Source: [examples/pomodoro/](examples/pomodoro/)
 git clone https://github.com/boots-coder/lumen.git
 cd lumen
 conda create -n lumen python=3.11 -y && conda activate lumen
-pip install httpx pydantic pydantic-settings tiktoken anyio rich prompt_toolkit anthropic
+pip install httpx pydantic tiktoken rich prompt_toolkit
+# Optional: web search tool, YAML-defined skills
+pip install duckduckgo_search pyyaml
 python chat.py
 ```
 

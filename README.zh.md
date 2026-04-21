@@ -51,7 +51,9 @@ Lumen 是一个模型无关、生产级的 AI 编码 Agent 框架（Python 3.11+
 git clone https://github.com/boots-coder/lumen.git
 cd lumen
 conda create -n lumen python=3.11 -y && conda activate lumen
-pip install httpx pydantic pydantic-settings tiktoken anyio rich prompt_toolkit anthropic
+pip install httpx pydantic tiktoken rich prompt_toolkit
+# 可选:Web 搜索工具、YAML 格式技能
+pip install duckduckgo_search pyyaml
 python chat.py
 ```
 
