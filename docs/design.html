@@ -1,0 +1,1825 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Lumen 设计文档 — 模型无关的 AI 编码 Agent SDK</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-light.min.css">
+<script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script defer>window.addEventListener("DOMContentLoaded",()=>{if(window.hljs)window.hljs.highlightAll();});</script>
+<style>
+:root{
+  /* Claude / Anthropic 米黄风 */
+  --bg:#faf9f5;          --bg-elev:#f3eee3;
+  --fg:#2b1d14;          --muted:#7a6a5a;
+  --border:#e6dfd0;      --accent:#cc785c;     /* Claude 橙 */
+  --accent-2:#a8552f;    --good:#5f8b4c;
+  --warn:#b8842c;        --bad:#b54b3d;
+  --code-bg:#f3eee3;     --code-fg:#2b1d14;
+  --kbd-bg:#fff;         --shadow:0 1px 0 rgba(60,40,20,.04);
+  --max:1180px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font-family:"Tiempos Text","Charter",ui-serif,Georgia,
+  "PingFang SC","Songti SC","Source Han Serif SC",
+  -apple-system,BlinkMacSystemFont,sans-serif;
+  font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid transparent}
+a:hover{border-bottom-color:var(--accent);text-decoration:none}
+code,pre,kbd{font-family:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+  font-size:13.5px}
+kbd{background:var(--kbd-bg);border:1px solid var(--border);border-radius:4px;
+  padding:1px 6px;font-size:12.5px;color:var(--fg);
+  box-shadow:0 1px 0 var(--border)}
+
+/* ── Layout ─────────────────────────────────────────────── */
+.layout{display:grid;grid-template-columns:280px 1fr;max-width:var(--max);
+  margin:0 auto;min-height:100vh}
+aside.toc{position:sticky;top:0;height:100vh;overflow-y:auto;
+  border-right:1px solid var(--border);padding:28px 22px 60px;
+  background:var(--bg)}
+main{padding:48px 56px 120px;min-width:0}
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr}
+  aside.toc{position:static;height:auto;border-right:0;
+    border-bottom:1px solid var(--border)}
+  main{padding:28px 22px 80px}
+}
+
+/* ── TOC ────────────────────────────────────────────────── */
+.toc h1{font-size:14px;font-weight:600;color:var(--muted);
+  margin:0 0 14px;letter-spacing:.05em;text-transform:uppercase}
+.toc ol{list-style:none;padding:0;margin:0;counter-reset:s}
+.toc ol > li{counter-increment:s;margin:4px 0}
+.toc ol > li > a::before{content:counter(s) ".  ";color:var(--muted)}
+.toc ol ol{margin:4px 0 8px 14px;padding-left:10px;
+  border-left:1px dashed var(--border);counter-reset:ss}
+.toc ol ol > li{counter-increment:ss}
+.toc ol ol > li > a::before{content:counter(s) "." counter(ss) "  ";color:var(--muted)}
+.toc a{color:#3a2820;font-size:13.5px;display:block;padding:3px 0;
+  border-bottom:0}
+.toc a:hover{color:var(--accent);border-bottom:0}
+.toc-meta{margin-top:24px;padding-top:18px;border-top:1px solid var(--border);
+  font-size:12.5px;color:var(--muted);line-height:1.9}
+.toc-meta b{color:#3a2820}
+
+/* ── Headings ────────────────────────────────────────────── */
+h1.title{font-size:36px;line-height:1.2;margin:0 0 10px;font-weight:600;
+  letter-spacing:-0.01em;color:var(--accent-2)}
+.subtitle{color:var(--muted);margin:0 0 8px;font-size:16px;font-style:italic}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 36px}
+.tag{display:inline-block;padding:4px 12px;border-radius:999px;
+  background:#fdfbf4;border:1px solid var(--border);
+  font-size:12.5px;color:var(--muted);box-shadow:var(--shadow)}
+.tag b{color:#3a2820;font-weight:600}
+
+h2{font-size:24px;margin:54px 0 14px;padding-bottom:10px;
+  border-bottom:1px solid var(--border);font-weight:600;
+  letter-spacing:-0.005em;scroll-margin-top:20px;color:#1f1410}
+h2::before{content:"§ ";color:var(--accent);font-weight:400}
+h3{font-size:18.5px;margin:32px 0 10px;font-weight:600;color:#3a2820;
+  scroll-margin-top:20px}
+h4{font-size:15px;margin:22px 0 8px;font-weight:600;color:#4a3528}
+
+/* ── Prose ───────────────────────────────────────────────── */
+p{margin:10px 0}
+ul,ol{margin:10px 0;padding-left:22px}
+li{margin:4px 0}
+blockquote{margin:18px 0;padding:12px 20px;border-left:3px solid var(--accent);
+  background:var(--bg-elev);border-radius:0 6px 6px 0;color:#3a2820;
+  font-style:italic}
+
+/* ── Code ────────────────────────────────────────────────── */
+pre{background:#fbf7ec;border:1px solid var(--border);
+  border-radius:8px;padding:14px 16px;overflow-x:auto;margin:14px 0;
+  position:relative;box-shadow:var(--shadow)}
+pre code{background:transparent;padding:0;font-size:13px;line-height:1.65;
+  color:var(--code-fg)}
+:not(pre) > code{background:#f1ead8;padding:1.5px 6px;border-radius:4px;
+  font-size:13px;color:#7a3a1f;border:1px solid #e6dcc4}
+.filebar{display:flex;justify-content:space-between;align-items:center;
+  background:#efe7d4;border:1px solid var(--border);border-bottom:0;
+  border-radius:8px 8px 0 0;padding:6px 14px;font-size:12px;color:var(--muted)}
+.filebar + pre{border-top-left-radius:0;border-top-right-radius:0;
+  margin-top:0;border-top:0}
+.filebar b{color:#3a2820;font-weight:600}
+.filebar .lang{color:var(--accent)}
+
+/* ── Tables ──────────────────────────────────────────────── */
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;
+  background:#fdfbf4;border:1px solid var(--border);border-radius:6px;
+  overflow:hidden}
+thead th{text-align:left;padding:10px 14px;background:#efe7d4;
+  border-bottom:1px solid var(--border);font-weight:600;color:#3a2820}
+tbody td{padding:9px 14px;border-bottom:1px solid #ece4d2;
+  vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:#f7f0dd}
+td code{white-space:nowrap}
+
+/* ── Callouts ───────────────────────────────────────────── */
+.callout{margin:18px 0;padding:14px 18px;border-radius:8px;
+  border:1px solid var(--border);background:var(--bg-elev);
+  box-shadow:var(--shadow)}
+.callout.note{border-left:4px solid var(--accent)}
+.callout.warn{border-left:4px solid var(--warn);
+  background:#f7f0dd}
+.callout.bad{border-left:4px solid var(--bad);
+  background:#f7e8e4}
+.callout .lab{display:inline-block;font-size:11.5px;text-transform:uppercase;
+  letter-spacing:.08em;margin-right:8px;font-weight:700}
+.note .lab{color:var(--accent)}
+.warn .lab{color:var(--warn)}
+.bad  .lab{color:var(--bad)}
+
+/* ── Diagrams ──────────────────────────────────────────── */
+.diagram{background:#fbf7ec;border:1px solid var(--border);
+  border-radius:8px;padding:20px;overflow-x:auto;margin:18px 0;
+  box-shadow:var(--shadow)}
+.diagram svg{display:block;max-width:100%;height:auto;margin:0 auto}
+.diagram .caption{text-align:center;font-size:12.5px;color:var(--muted);
+  margin-top:10px;font-style:italic}
+
+/* SVG diagram inner styles */
+svg.lumen-diagram .node-bg{fill:#fdfbf4;stroke:#e0d6bd;stroke-width:1}
+svg.lumen-diagram .node-bg.accent{fill:#fbeee5;stroke:#e8c0a8}
+svg.lumen-diagram .node-bg.muted{fill:#f3eee3;stroke:#dccebc}
+svg.lumen-diagram .layer-bg{fill:#f6efde;stroke:#e0d6bd;stroke-width:1}
+svg.lumen-diagram .node-title{font:600 12.5px "JetBrains Mono","SF Mono",
+  Menlo,monospace;fill:#2b1d14;dominant-baseline:middle;text-anchor:middle}
+svg.lumen-diagram .node-sub{font:11px "JetBrains Mono","SF Mono",
+  Menlo,monospace;fill:#7a6a5a;dominant-baseline:middle;text-anchor:middle}
+svg.lumen-diagram .layer-label{font:600 11px ui-sans-serif,system-ui,sans-serif;
+  fill:#a8552f;letter-spacing:0.12em;text-transform:uppercase}
+svg.lumen-diagram .arrow{stroke:#a8552f;stroke-width:1.4;fill:none}
+svg.lumen-diagram .arrow.thin{stroke:#b89a7a;stroke-width:1}
+svg.lumen-diagram .arrow-label{font:11px ui-sans-serif,system-ui,sans-serif;
+  fill:#7a6a5a}
+svg.lumen-diagram .pill{fill:#fbeee5;stroke:#e8c0a8}
+svg.lumen-diagram .pill-text{font:600 11.5px ui-sans-serif,system-ui,sans-serif;
+  fill:#a8552f;dominant-baseline:middle;text-anchor:middle}
+svg.lumen-diagram .decision{fill:#f7e8e4;stroke:#e8b8ad}
+svg.lumen-diagram .ok{fill:#ecf1de;stroke:#cdd9b3}
+svg.lumen-diagram .bad{fill:#f5dcd6;stroke:#e8b8ad}
+
+/* ── File tree ──────────────────────────────────────────── */
+.tree{background:#fbf7ec;border:1px solid var(--border);border-radius:8px;
+  padding:20px 24px;margin:18px 0;font-family:"JetBrains Mono","SF Mono",
+  Menlo,Consolas,monospace;font-size:13px;line-height:1.85;
+  color:#3a2820;box-shadow:var(--shadow)}
+.tree ul{list-style:none;margin:0;padding:0 0 0 18px;
+  border-left:1px dashed #d5c5a5}
+.tree > ul{padding-left:0;border-left:0}
+.tree li{position:relative;padding-left:16px}
+.tree li::before{content:"";position:absolute;left:0;top:12px;width:12px;
+  height:0;border-top:1px dashed #d5c5a5}
+.tree > ul > li::before{display:none}
+.tree li > ul > li:last-child::after{content:"";position:absolute;
+  left:-1px;top:14px;bottom:0;width:1px;background:#fbf7ec}
+.tree .dir{color:#a8552f;font-weight:600}
+.tree .dir::before{content:"▸ ";color:#cc785c;margin-right:2px}
+.tree .file{color:#3a2820}
+.tree .file::before{content:"·  ";color:#a89478}
+.tree .cmt{color:#7a6a5a;font-style:normal;margin-left:8px}
+.tree .cmt::before{content:"— "}
+
+/* ── Misc ────────────────────────────────────────────────── */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media (max-width:760px){.grid-2{grid-template-columns:1fr}}
+.muted{color:var(--muted)}
+.pill{display:inline-block;padding:1.5px 8px;border-radius:999px;
+  font-size:11.5px;background:#f1ead8;color:#3a2820;border:1px solid #e0d6bd}
+.pill.ok{color:var(--good);background:#ecf1de;border-color:#cdd9b3}
+.pill.warn{color:var(--warn);background:#f5ecd0;border-color:#e3d5a4}
+.pill.bad{color:var(--bad);background:#f5dcd6;border-color:#e8b8ad}
+hr{border:0;border-top:1px solid var(--border);margin:36px 0}
+.footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);
+  color:var(--muted);font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ─────────────────────────────────────── TOC ─────────────────────────────────────── -->
+<aside class="toc">
+  <h1>目录</h1>
+  <ol>
+    <li><a href="#overview">项目概述</a></li>
+    <li><a href="#arch">系统总体架构</a>
+      <ol>
+        <li><a href="#arch-layers">分层视图</a></li>
+        <li><a href="#arch-flow">单轮 chat() 数据流</a></li>
+      </ol>
+    </li>
+    <li><a href="#core">核心类型与协议</a></li>
+    <li><a href="#agent">Agent 主类</a></li>
+    <li><a href="#providers">Provider 适配层</a>
+      <ol>
+        <li><a href="#prov-factory">Factory 路由</a></li>
+        <li><a href="#prov-base">BaseProvider 协议</a></li>
+        <li><a href="#prov-anthropic">Anthropic 实现</a></li>
+        <li><a href="#prov-openai">OpenAI 兼容实现</a></li>
+        <li><a href="#prov-profile">ModelProfile</a></li>
+      </ol>
+    </li>
+    <li><a href="#tools">Tool 工具系统</a>
+      <ol>
+        <li><a href="#tools-base">基类与 Registry</a></li>
+        <li><a href="#tools-list">13 个内置工具</a></li>
+        <li><a href="#tools-exec">ToolExecutor 并发模型</a></li>
+      </ol>
+    </li>
+    <li><a href="#context">上下文管理</a>
+      <ol>
+        <li><a href="#ctx-session">Session</a></li>
+        <li><a href="#ctx-transcript">Transcript JSONL</a></li>
+        <li><a href="#ctx-compact">自动压缩</a></li>
+        <li><a href="#ctx-memory">ENGRAM 记忆</a></li>
+        <li><a href="#ctx-sessmem">SessionMemory(TF-IDF)</a></li>
+        <li><a href="#ctx-mode">ModeStack</a></li>
+      </ol>
+    </li>
+    <li><a href="#services">Services 横切能力</a>
+      <ol>
+        <li><a href="#svc-thinking">Extended Thinking</a></li>
+        <li><a href="#svc-cache">Prompt Cache</a></li>
+        <li><a href="#svc-structured">结构化输出</a></li>
+        <li><a href="#svc-perm">权限模型</a></li>
+        <li><a href="#svc-classifier">Command Classifier</a></li>
+        <li><a href="#svc-hooks">Hook 生命周期</a></li>
+        <li><a href="#svc-subagent">SubAgent 子代理</a></li>
+        <li><a href="#svc-retry">持久化重试</a></li>
+        <li><a href="#svc-mcp">MCP 集成</a></li>
+      </ol>
+    </li>
+    <li><a href="#safety">安全 / 权限决策矩阵</a></li>
+    <li><a href="#extending">扩展点</a></li>
+    <li><a href="#cli">CLI 与 Slash 命令</a></li>
+    <li><a href="#tree">目录结构总览</a></li>
+    <li><a href="#perf">性能 & 工程取舍</a></li>
+  </ol>
+  <div class="toc-meta">
+    <div><b>项目</b>:Lumen v0.5.0</div>
+    <div><b>许可</b>:MIT</div>
+    <div><b>路径</b>:<code>lumen/</code></div>
+    <div><b>语言</b>:Python 3.11+</div>
+  </div>
+</aside>
+
+<!-- ─────────────────────────────────────── MAIN ─────────────────────────────────────── -->
+<main>
+
+<h1 class="title">Lumen 设计文档</h1>
+<p class="subtitle">模型无关的 AI 编码 Agent SDK — 架构、模块、数据流与扩展点的完整说明</p>
+<div class="hero-meta">
+  <span class="tag"><b>版本</b> 0.5.0</span>
+  <span class="tag"><b>包名</b> lumen</span>
+  <span class="tag"><b>Runtime</b> Python ≥ 3.11</span>
+  <span class="tag"><b>License</b> MIT</span>
+  <span class="tag"><b>依赖</b> httpx · pydantic · tiktoken · anyio</span>
+</div>
+
+<!-- ═════════════════════════════════════ 1. OVERVIEW ═════════════════════════════════════ -->
+<h2 id="overview">1. 项目概述</h2>
+
+<p><b>Lumen</b> 是一个生产级、模型无关的 AI 编码代理框架,把 Claude Code / Cursor Agent 这类工具中"工具调用 + 上下文工程 + 推理预算管理 + 安全控制"的整套机制抽象为可嵌入的 Python SDK。它的核心承诺是:</p>
+
+<blockquote>
+给任意大模型一个 API Key,就能让它具备读、写、分析代码的能力——OpenAI、Anthropic、DeepSeek、Ollama,或任何 OpenAI 兼容协议。
+</blockquote>
+
+<h3>1.1 设计目标</h3>
+<ul>
+  <li><b>模型无关</b>:Provider 抽象屏蔽各家 API 差异(消息格式、工具调用、思考字段、缓存机制)。</li>
+  <li><b>生产可用</b>:重试、限流、abort、权限、Hook、持久化重试都内置;不依赖外部基础设施(向量库、消息队列)。</li>
+  <li><b>轻依赖</b>:核心仅 5 个 PyPI 依赖(<code>httpx, pydantic, pydantic-settings, tiktoken, anyio</code>)。</li>
+  <li><b>可解释的安全模型</b>:四维特征评分 + Regex 双引擎,五级风险,可向用户解释为什么拒绝。</li>
+  <li><b>无侵入嵌入</b>:既能作为 CLI(<code>python chat.py</code>)直接使用,也能作为 SDK 在任意 Python 程序中初始化 <code>Agent</code>。</li>
+</ul>
+
+<h3>1.2 关键能力一览</h3>
+<table>
+  <thead><tr><th>能力</th><th>位置</th><th>关键实现</th></tr></thead>
+  <tbody>
+    <tr><td>多模型路由</td><td><code>providers/</code></td><td>基于模型名/<code>base_url</code> 的工厂分发</td></tr>
+    <tr><td>13 个内置工具</td><td><code>tools/</code></td><td>Pydantic 输入校验 + 异步 <code>execute()</code></td></tr>
+    <tr><td>Extended Thinking</td><td><code>services/thinking.py</code></td><td>Anthropic blocks / OpenAI reasoning_effort / 通用 CoT</td></tr>
+    <tr><td>Prompt Cache</td><td><code>services/prompt_cache.py</code></td><td>Anthropic 原生 <code>cache_control</code> + Hash-based</td></tr>
+    <tr><td>结构化输出</td><td><code>services/structured_output.py</code></td><td>JSON Schema 强制 + Pydantic 验证</td></tr>
+    <tr><td>权限系统</td><td><code>services/permissions.py</code></td><td>4 档 PermissionMode + 规则引擎</td></tr>
+    <tr><td>命令分类器</td><td><code>services/command_classifier.py</code></td><td>四维加权评分 + Regex Fallback</td></tr>
+    <tr><td>自动压缩</td><td><code>compact/</code></td><td>阈值触发 + 结构化摘要</td></tr>
+    <tr><td>ENGRAM 记忆</td><td><code>context/memory.py</code></td><td>系统 / 用户 / 项目 / 本地 四层加载</td></tr>
+    <tr><td>会话持久化</td><td><code>context/transcript.py</code></td><td>JSONL 追加写,crash-safe</td></tr>
+    <tr><td>子代理</td><td><code>services/subagent.py</code></td><td>同步/异步 spawn,abort 联动</td></tr>
+    <tr><td>持久化重试</td><td><code>services/persistent_retry.py</code></td><td>阶梯模型升级 + Webhook</td></tr>
+    <tr><td>Hook 生命周期</td><td><code>services/hooks.py</code></td><td>pre/post tool 拦截、修改、补救</td></tr>
+    <tr><td>MCP 客户端</td><td><code>services/mcp/</code></td><td>外接 Model Context Protocol 服务</td></tr>
+  </tbody>
+</table>
+
+<!-- ═════════════════════════════════════ 2. ARCH ═════════════════════════════════════ -->
+<h2 id="arch">2. 系统总体架构</h2>
+
+<h3 id="arch-layers">2.1 分层视图</h3>
+
+<p>Lumen 自上而下分为 <b>入口层 / Agent 编排层 / 服务横切层 / 适配层 / 基础设施层</b> 五层,如下图:</p>
+
+<div class="diagram">
+<svg class="lumen-diagram" viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg">
+  <!-- Layer 1: ENTRY -->
+  <rect class="layer-bg" x="20" y="20" width="860" height="68" rx="8"/>
+  <text class="layer-label" x="40" y="42">01 · ENTRY</text>
+  <rect class="node-bg" x="200" y="48" width="220" height="34" rx="6"/>
+  <text class="node-title" x="310" y="65">chat.py</text>
+  <text class="node-sub"   x="310" y="78">REPL · Slash 命令</text>
+  <rect class="node-bg" x="460" y="48" width="220" height="34" rx="6"/>
+  <text class="node-title" x="570" y="65">from lumen import Agent</text>
+  <text class="node-sub"   x="570" y="78">SDK 内嵌</text>
+
+  <!-- Layer 2: ORCHESTRATION -->
+  <rect class="layer-bg" x="20" y="100" width="860" height="138" rx="8"/>
+  <text class="layer-label" x="40" y="122">02 · ORCHESTRATION  —  Agent.chat() / .stream() / .query()</text>
+  <rect class="node-bg accent" x="60"  y="142" width="170" height="80" rx="6"/>
+  <text class="node-title" x="145" y="170">Session</text>
+  <text class="node-sub"   x="145" y="190">messages[] · session_id</text>
+  <text class="node-sub"   x="145" y="207">to_openai / to_anthropic</text>
+
+  <rect class="node-bg accent" x="245" y="142" width="170" height="80" rx="6"/>
+  <text class="node-title" x="330" y="170">SystemPromptBuilder</text>
+  <text class="node-sub"   x="330" y="190">ENGRAM · Git</text>
+  <text class="node-sub"   x="330" y="207">Modes · SessionMemory</text>
+
+  <rect class="node-bg accent" x="430" y="142" width="170" height="80" rx="6"/>
+  <text class="node-title" x="515" y="170">Provider</text>
+  <text class="node-sub"   x="515" y="190">httpx · SSE</text>
+  <text class="node-sub"   x="515" y="207">→ LLM API</text>
+
+  <rect class="node-bg accent" x="615" y="142" width="225" height="80" rx="6"/>
+  <text class="node-title" x="727" y="170">ToolExecutor</text>
+  <text class="node-sub"   x="727" y="190">并发(读)/串行(写)</text>
+  <text class="node-sub"   x="727" y="207">Hook · Perm · Truncate</text>
+
+  <!-- arrows between orchestration nodes -->
+  <path class="arrow" d="M 230 182 L 245 182" marker-end="url(#arr)"/>
+  <path class="arrow" d="M 415 182 L 430 182" marker-end="url(#arr)"/>
+  <path class="arrow" d="M 600 182 L 615 182" marker-end="url(#arr)"/>
+
+  <!-- Layer 3: SERVICES -->
+  <rect class="layer-bg" x="20" y="250" width="860" height="80" rx="8"/>
+  <text class="layer-label" x="40" y="272">03 · SERVICES (横切)</text>
+
+  <g>
+    <rect class="pill" x="50"  y="288" width="92"  height="28" rx="14"/>
+    <text class="pill-text" x="96"  y="303">Thinking</text>
+    <rect class="pill" x="148" y="288" width="110" height="28" rx="14"/>
+    <text class="pill-text" x="203" y="303">PromptCache</text>
+    <rect class="pill" x="264" y="288" width="130" height="28" rx="14"/>
+    <text class="pill-text" x="329" y="303">StructuredOutput</text>
+    <rect class="pill" x="400" y="288" width="100" height="28" rx="14"/>
+    <text class="pill-text" x="450" y="303">Permissions</text>
+    <rect class="pill" x="506" y="288" width="100" height="28" rx="14"/>
+    <text class="pill-text" x="556" y="303">Classifier</text>
+    <rect class="pill" x="612" y="288" width="70"  height="28" rx="14"/>
+    <text class="pill-text" x="647" y="303">Hooks</text>
+    <rect class="pill" x="688" y="288" width="80"  height="28" rx="14"/>
+    <text class="pill-text" x="728" y="303">SubAgent</text>
+    <rect class="pill" x="774" y="288" width="105" height="28" rx="14"/>
+    <text class="pill-text" x="827" y="303">PersistentRetry</text>
+  </g>
+
+  <!-- Layer 4: ADAPTERS -->
+  <rect class="layer-bg" x="20" y="342" width="860" height="68" rx="8"/>
+  <text class="layer-label" x="40" y="364">04 · ADAPTERS</text>
+  <rect class="node-bg muted" x="60"  y="370" width="240" height="32" rx="6"/>
+  <text class="node-title" x="180" y="389">providers/{anthropic, openai_compat}</text>
+  <rect class="node-bg muted" x="320" y="370" width="220" height="32" rx="6"/>
+  <text class="node-title" x="430" y="389">tools/  (13 个内置)</text>
+  <rect class="node-bg muted" x="560" y="370" width="280" height="32" rx="6"/>
+  <text class="node-title" x="700" y="389">MCPClient  ·  ModelProfile</text>
+
+  <!-- Layer 5: INFRA -->
+  <rect class="layer-bg" x="20" y="422" width="860" height="44" rx="8"/>
+  <text class="layer-label" x="40" y="448">05 · INFRA</text>
+  <text class="node-sub" x="450" y="450" style="text-anchor:start">
+    httpx · tiktoken · anyio · pydantic · ~/.lumen/projects/&lt;cwd&gt;/&lt;sid&gt;.jsonl
+  </text>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"
+            markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a8552f"/>
+    </marker>
+  </defs>
+</svg>
+<div class="caption">图 2-1 · Lumen 五层架构。单向依赖,服务层无状态可被子代理复制。</div>
+</div>
+
+<p>关键约束:</p>
+<ul>
+  <li><b>单向依赖</b>:服务层依赖适配层,Agent 依赖服务层,不允许反向。</li>
+  <li><b>无状态服务</b>:大部分 service 类是 <code>@staticmethod</code> 工具集合或轻状态 Manager,便于复制到子代理中。</li>
+  <li><b>异步优先</b>:所有 IO 与工具执行都是 <code>async</code>,基于 <code>anyio</code> 同时兼容 <code>asyncio</code>。</li>
+</ul>
+
+<h3 id="arch-flow">2.2 单轮 <code>chat()</code> 数据流</h3>
+
+<p>下面这张时序图把一次 <code>await agent.chat(user_input)</code> 拆到工具循环结束:</p>
+
+<div class="diagram">
+<svg class="lumen-diagram" viewBox="0 0 900 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"
+            markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a8552f"/>
+    </marker>
+    <marker id="arrThin" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"
+            markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b89a7a"/>
+    </marker>
+  </defs>
+
+  <!-- 1. User input -->
+  <rect class="node-bg" x="350" y="20" width="200" height="40" rx="20"/>
+  <text class="node-title" x="450" y="44">User input → Agent.chat()</text>
+
+  <!-- 2. session.append(user) -->
+  <rect class="node-bg accent" x="350" y="90" width="200" height="40" rx="6"/>
+  <text class="node-title" x="450" y="114">Session.append(user)</text>
+  <path class="arrow" d="M 450 60 L 450 88" marker-end="url(#arr2)"/>
+
+  <!-- 3. autocompact decision -->
+  <polygon class="decision" points="450,160 580,200 450,240 320,200"/>
+  <text class="node-title" x="450" y="195">total ≥ autocompact?</text>
+  <text class="node-sub"   x="450" y="212">阈值 = window − 33K</text>
+  <path class="arrow" d="M 450 130 L 450 158" marker-end="url(#arr2)"/>
+
+  <!-- 3a. compact path -->
+  <rect class="node-bg muted" x="660" y="180" width="200" height="44" rx="6"/>
+  <text class="node-title" x="760" y="200">Compactor.compact()</text>
+  <text class="node-sub"   x="760" y="216">LLM 摘要 + 保留尾部 N 条</text>
+  <path class="arrow" d="M 580 200 L 658 200" marker-end="url(#arr2)"/>
+  <text class="arrow-label" x="595" y="194">yes</text>
+
+  <!-- 4. system prompt build -->
+  <rect class="node-bg accent" x="350" y="270" width="200" height="56" rx="6"/>
+  <text class="node-title" x="450" y="290">SystemPromptBuilder</text>
+  <text class="node-sub"   x="450" y="306">ENGRAM · Git · Modes</text>
+  <text class="node-sub"   x="450" y="320">+ SessionMemory(TF-IDF)</text>
+  <path class="arrow" d="M 450 240 L 450 268" marker-end="url(#arr2)"/>
+  <text class="arrow-label" x="460" y="258">no</text>
+  <path class="arrow thin" d="M 760 224 C 760 260, 600 260, 540 280" marker-end="url(#arrThin)"/>
+
+  <!-- 5. provider call -->
+  <rect class="node-bg accent" x="350" y="356" width="200" height="56" rx="6"/>
+  <text class="node-title" x="450" y="376">Provider.chat()</text>
+  <text class="node-sub"   x="450" y="392">+ Thinking · Cache</text>
+  <text class="node-sub"   x="450" y="406">→ LLM(retry · abort)</text>
+  <path class="arrow" d="M 450 326 L 450 354" marker-end="url(#arr2)"/>
+
+  <!-- 6. response decision -->
+  <polygon class="decision" points="450,442 580,482 450,522 320,482"/>
+  <text class="node-title" x="450" y="478">response.tool_calls?</text>
+  <text class="node-sub"   x="450" y="494">finish_reason ?</text>
+  <path class="arrow" d="M 450 412 L 450 440" marker-end="url(#arr2)"/>
+
+  <!-- 6a. no tool_calls -->
+  <rect class="node-bg ok" x="60" y="462" width="200" height="40" rx="6"/>
+  <text class="node-title" x="160" y="486">return ChatResponse</text>
+  <path class="arrow" d="M 320 482 L 262 482" marker-end="url(#arr2)"/>
+  <text class="arrow-label" x="278" y="476">no</text>
+
+  <!-- 6b. tool_calls -->
+  <rect class="node-bg bad" x="660" y="430" width="220" height="180" rx="6"/>
+  <text class="node-title" x="770" y="450">ToolExecutor</text>
+  <text class="node-sub" x="770" y="472">① Abort.check()</text>
+  <text class="node-sub" x="770" y="490">② PreToolHook</text>
+  <text class="node-sub" x="770" y="508">③ PermissionChecker</text>
+  <text class="node-sub" x="770" y="526">④ CommandClassifier(bash)</text>
+  <text class="node-sub" x="770" y="544">⑤ 并发/串行 execute</text>
+  <text class="node-sub" x="770" y="562">⑥ truncate · PostToolHook</text>
+  <text class="node-sub" x="770" y="594" style="fill:#a8552f">→ Session.append(tool_result)</text>
+  <path class="arrow" d="M 580 482 L 658 462" marker-end="url(#arr2)"/>
+  <text class="arrow-label" x="595" y="466">yes</text>
+
+  <!-- loop back -->
+  <path class="arrow thin" d="M 770 610 C 770 625, 200 625, 200 425
+                              C 200 380, 350 380, 350 384" marker-end="url(#arrThin)"/>
+  <text class="arrow-label" x="430" y="620">回到 Provider 循环(直到无 tool_calls 或 max_tool_calls)</text>
+</svg>
+<div class="caption">图 2-2 · 单轮 Agent.chat() 完整数据流。工具循环上限由 max_tool_calls (默认 20) 截断。</div>
+</div>
+
+<p>循环上限由 <code>Agent(max_tool_calls=20)</code> 控制,达到上限会强制结束并把当前内容作为最终回答返回。</p>
+
+<!-- ═════════════════════════════════════ 3. TYPES ═════════════════════════════════════ -->
+<h2 id="core">3. 核心类型与协议</h2>
+
+<p>类型定义集中在 <a href="../lumen/_types.py"><code>lumen/_types.py</code></a>,是其它所有模块的公共词汇表。</p>
+
+<div class="filebar"><b>lumen/_types.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Literal
+
+
+class Role(str, Enum):
+    SYSTEM    = "system"
+    USER      = "user"
+    ASSISTANT = "assistant"
+    TOOL      = "tool"
+
+
+@dataclass
+class ToolCall:
+    id: str                          # 唯一 ID(provider 生成或自构造)
+    name: str                        # 工具名
+    arguments: dict[str, Any]        # 已 parse 的参数(非字符串)
+
+
+@dataclass
+class Message:
+    role: Role
+    content: str
+    token_count: int = 0
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    is_compact_summary: bool = False
+    tool_calls: list[ToolCall] | None = None     # assistant 含工具调用时填充
+    tool_call_id: str | None = None              # 当 role == TOOL
+    tool_name: str | None = None
+
+    # 关键转换:同一条消息同时支持两种 API 格式
+    def to_openai_dict(self)    -> dict[str, Any]: ...
+    def to_anthropic_dict(self) -> dict[str, Any]: ...</code></pre>
+
+<p>需要特别注意 <code>Message</code> 的两套序列化方法:</p>
+<ul>
+  <li><code>to_openai_dict()</code> — 工具结果以 <code>role=tool</code> + <code>tool_call_id</code> 单独成消息。</li>
+  <li><code>to_anthropic_dict()</code> — 工具结果包装在 user 消息的 <code>content</code> 数组中,类型 <code>tool_result</code>;助手的工具调用则是 <code>type: tool_use</code> 的 content block。</li>
+</ul>
+
+<div class="callout note">
+  <span class="lab">设计</span> Message 自身负责"知道怎么把自己变成两种格式"——而不是在 Provider 里写转换函数。这避免了 Provider 实现重复处理 tool_calls 的边界条件。
+</div>
+
+<h4>TokenUsage 与上下文窗口</h4>
+
+<div class="filebar"><b>lumen/_types.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">@dataclass
+class TokenUsage:
+    total: int = 0           # 当前上下文里所有消息 + system 的 token 总和
+    prompt: int = 0          # 上轮请求送出的 prompt tokens
+    completion: int = 0      # 上轮 assistant 输出的 tokens
+    context_window: int = 0  # 模型最大窗口
+    compaction_count: int = 0
+
+    @property
+    def percent_used(self) -> float:
+        if self.context_window == 0:
+            return 0.0
+        return round(self.total / self.context_window * 100, 1)
+
+    @property
+    def tokens_remaining(self) -> int:
+        return max(0, self.context_window - self.total)</code></pre>
+
+<!-- ═════════════════════════════════════ 4. AGENT ═════════════════════════════════════ -->
+<h2 id="agent">4. Agent 主类</h2>
+
+<p>Agent 是唯一对用户暴露的高层类,位于 <a href="../lumen/agent.py"><code>lumen/agent.py</code></a> ,约 1400 行。它聚合所有 service / context / provider / tools,并把流程化的 <code>chat()</code> / <code>stream()</code> / <code>query()</code> 三个入口暴露出来。</p>
+
+<h4>构造签名(节选)</h4>
+<div class="filebar"><b>lumen/agent.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">class Agent:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+        *,
+        # ── 上下文 ─────────────────────────────────
+        system_prompt: str | None = None,
+        context_window: int | None = None,
+        max_output_tokens: int | None = None,
+        cwd: Path | str | None = None,
+        inject_git_state: bool = True,
+        inject_memory: bool = True,
+        # ── 自动压缩 ───────────────────────────────
+        auto_compact: bool = True,
+        keep_recent: int = 6,
+        compact_model: str | None = None,
+        compact_api_key: str | None = None,
+        compact_base_url: str | None = None,
+        # ── 模型行为 ───────────────────────────────
+        temperature: float = 0.7,
+        timeout: float = 120.0,
+        # ── 工具 ───────────────────────────────────
+        tools: list[Tool] | None = None,
+        max_tool_calls: int = 20,
+        # ── 安全 ───────────────────────────────────
+        permission_checker: PermissionChecker | None = None,
+        hooks: HookRegistry | None = None,
+        # ── 网络 ───────────────────────────────────
+        retry_config: RetryConfig | None = None,
+        fallback_model: str | None = None,
+        # ── 缓存 ───────────────────────────────────
+        enable_file_cache: bool = True,
+        # ── 推理 ───────────────────────────────────
+        thinking: ThinkingConfig | None = None,
+        # ── 持久化重试 / 子代理 / Review ─────────────
+        persistent_retry: PersistentRetryConfig | None = None,
+        session: Session | None = None,
+    ): ...</code></pre>
+
+<h4>三个核心入口</h4>
+
+<table>
+  <thead><tr><th>方法</th><th>用途</th><th>返回</th></tr></thead>
+  <tbody>
+    <tr><td><code>await chat(text)</code></td><td>普通对话,走完整工具循环</td><td><code>ChatResponse</code></td></tr>
+    <tr><td><code>async for c in stream(text)</code></td><td>SSE 流式增量输出(无工具)</td><td><code>AsyncIterator[str]</code></td></tr>
+    <tr><td><code>await query(text, schema=M)</code></td><td>强制结构化输出,自动 Pydantic 校验</td><td><code>StructuredResult[M]</code></td></tr>
+  </tbody>
+</table>
+
+<h4>chat() 主循环骨架(概念化)</h4>
+<div class="filebar"><b>简化伪代码,真实实现见 agent.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">async def chat(self, text: str) -> ChatResponse:
+    # 1. 写入用户消息
+    self.session.append(Message(Role.USER, text))
+
+    # 2. 评估上下文窗口,必要时触发自动压缩
+    state = assess_context_window(self.session, self._cfg)
+    if self.auto_compact and state.should_compact:
+        await self._compactor.compact(self.session, keep_recent=self.keep_recent)
+
+    # 3. 构造 system prompt(ENGRAM + Git + Modes + SessionMemory)
+    system = self._system_builder.build()
+
+    # 4. 工具循环
+    for round_idx in range(self.max_tool_calls):
+        payload = self._build_payload(system)
+        payload = ThinkingManager.prepare_request(self.thinking, self.profile, payload)
+        payload = self._cache.prepare(payload, self.profile)
+
+        resp = await with_retry(
+            lambda: self.provider.chat(**payload),
+            config=self.retry_config,
+            abort=self.abort,
+        )
+        self.session.append(Message.from_provider(resp))
+
+        if not resp.tool_calls:
+            break
+
+        # 5. 工具执行(并发/串行 + 权限 + Hook)
+        results = await self.tool_executor.run(resp.tool_calls)
+        for r in results:
+            self.session.append(Message(Role.TOOL, r.output, tool_call_id=r.id))
+
+    return ChatResponse(content=self.session.last_assistant.content,
+                        token_usage=self._token_usage())</code></pre>
+
+<!-- ═════════════════════════════════════ 5. PROVIDERS ═════════════════════════════════════ -->
+<h2 id="providers">5. Provider 适配层</h2>
+
+<h3 id="prov-factory">5.1 Factory 路由</h3>
+
+<p>路由策略简洁明了:看 <code>base_url</code>,再看模型名前缀,默认走 OpenAI 兼容。</p>
+
+<div class="filebar"><b>lumen/providers/factory.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">_ANTHROPIC_BASE = "https://api.anthropic.com"
+_OPENAI_BASE    = "https://api.openai.com/v1"
+
+def create_provider(
+    api_key: str, model: str, base_url: str | None, timeout: float = 120.0,
+) -> tuple[BaseProvider, str]:
+    is_anthropic = (
+        (base_url is not None and "anthropic.com" in base_url)
+        or model.startswith("claude")
+    )
+    if is_anthropic:
+        resolved = base_url or _ANTHROPIC_BASE
+        return AnthropicProvider(api_key, model, resolved, timeout), resolved
+    resolved = base_url or _OPENAI_BASE
+    return OpenAICompatProvider(api_key, model, resolved, timeout), resolved</code></pre>
+
+<div class="callout note">
+  <span class="lab">兼容性</span> 任何 OpenAI 兼容 API(Together / Groq / Ollama / vLLM / LM Studio / DeepSeek)都通过 <code>OpenAICompatProvider</code> 走;只要传入对应 <code>base_url</code> 即可。
+</div>
+
+<h3 id="prov-base">5.2 BaseProvider 协议</h3>
+
+<div class="filebar"><b>lumen/providers/base.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">class BaseProvider(ABC):
+    """各家 LLM API 的轻适配器,负责消息格式 / 工具调用 / 流式三件事。"""
+
+    @abstractmethod
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        system: str,
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ProviderResponse:
+        """messages 已经是该 provider 的格式,Provider 只负责发请求和解析响应。"""
+
+    @abstractmethod
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> AsyncIterator[str]: ...</code></pre>
+
+<p>注意 Provider 拿到的 <code>messages</code> 已经是该家 API 的字典格式(由 Message 的 <code>to_*_dict()</code> 完成转换),Provider 内部不再做语义转换,只做拼装与 HTTP IO。</p>
+
+<h3 id="prov-anthropic">5.3 Anthropic 实现要点</h3>
+
+<ul>
+  <li>使用 <code>POST https://api.anthropic.com/v1/messages</code>,头部 <code>anthropic-version: 2023-06-01</code>。</li>
+  <li>工具调用映射:返回 <code>content</code> 数组里 <code>type=tool_use</code> 块解析为 <code>ToolCall</code>。</li>
+  <li>系统提示放顶层 <code>system</code> 字段,可以是字符串或带 <code>cache_control</code> 的 block 数组。</li>
+  <li>Thinking blocks 通过 <code>thinking: {"type": "enabled", "budget_tokens": N}</code> 启用。</li>
+</ul>
+
+<h3 id="prov-openai">5.4 OpenAI 兼容实现要点</h3>
+
+<ul>
+  <li>使用 <code>POST {base_url}/chat/completions</code>。</li>
+  <li>O 系列(o1/o3-*)模型自动适配:用 <code>max_completion_tokens</code>、注入 <code>reasoning_effort</code>、不能设 temperature。</li>
+  <li>工具调用映射:解析 <code>choices[0].message.tool_calls[*]</code>,把 <code>arguments</code> 字符串 <code>json.loads</code>。</li>
+  <li>支持 SSE 流(<code>data: ...\n\n</code>)。</li>
+</ul>
+
+<h3 id="prov-profile">5.5 ModelProfile — 跨家家的能力探测</h3>
+
+<p><code>providers/model_profiles.py</code> 给每个常见模型打了一张能力卡,被 Thinking / PromptCache / StructuredOutput 用来选择不同策略:</p>
+
+<div class="filebar"><b>lumen/providers/model_profiles.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">@dataclass
+class ModelCapabilities:
+    supports_tools: bool = True
+    supports_streaming: bool = True
+    supports_prompt_cache: bool = False
+    cache_format: Literal["anthropic_native", "none"] = "none"
+    thinking_format:  Literal["anthropic_blocks", "openai_reasoning", "none"] = "none"
+    structured_output_format: Literal["json_schema", "anthropic_tool", "json_mode", "none"] = "none"
+    context_window: int = 128_000
+    max_output_tokens: int = 8_192
+
+
+@dataclass
+class ModelProfile:
+    name: str
+    family: Literal["openai", "anthropic", "deepseek", "ollama", "other"]
+    capabilities: ModelCapabilities
+
+
+def detect_profile(model: str) -> ModelProfile:
+    """根据模型名前缀返回 profile;未知模型给一个保守默认。"""</code></pre>
+
+<!-- ═════════════════════════════════════ 6. TOOLS ═════════════════════════════════════ -->
+<h2 id="tools">6. Tool 工具系统</h2>
+
+<h3 id="tools-base">6.1 基类与 Registry</h3>
+
+<div class="filebar"><b>lumen/tools/base.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
+from pydantic import BaseModel
+
+InputT = TypeVar("InputT", bound=BaseModel)
+
+
+class ToolResult(BaseModel):
+    success: bool
+    output: str
+    error: str | None = None
+
+
+class Tool(ABC, Generic[InputT]):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def description(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def input_schema(self) -> type[InputT]: ...
+
+    @abstractmethod
+    async def execute(self, input_data: InputT) -> ToolResult: ...
+
+    def to_openai_schema(self) -> dict[str, Any]:
+        schema = self.input_schema.model_json_schema()
+        schema.pop("$defs", None)  # OpenAI 不接受 $defs
+        return {"type": "function",
+                "function": {"name": self.name, "description": self.description,
+                             "parameters": schema}}
+
+    def to_anthropic_schema(self) -> dict[str, Any]:
+        schema = self.input_schema.model_json_schema()
+        schema.pop("$defs", None)
+        return {"name": self.name, "description": self.description,
+                "input_schema": schema}</code></pre>
+
+<p>所有工具的 <code>input_schema</code> 都是 Pydantic 模型,因此模型给出的参数会经过严格类型校验,避免 LLM 给出脏数据时 tool 抛底层异常。</p>
+
+<h4>工具示例:<code>read_file</code></h4>
+
+<div class="filebar"><b>lumen/tools/file_read.py 概念化</b><span class="lang">python</span></div>
+<pre><code class="language-python">class FileReadInput(BaseModel):
+    path: str
+    offset: int = 0
+    limit: int = 2000
+
+
+class FileReadTool(Tool[FileReadInput]):
+    name = "read_file"
+    description = "Read a file from disk, optionally a slice (offset/limit lines)."
+    input_schema = FileReadInput
+
+    async def execute(self, inp: FileReadInput) -> ToolResult:
+        try:
+            text = Path(inp.path).read_text(errors="replace")
+            lines = text.splitlines()[inp.offset : inp.offset + inp.limit]
+            numbered = "\n".join(f"{i+1+inp.offset:>6}\t{l}" for i, l in enumerate(lines))
+            return ToolResult(success=True, output=numbered)
+        except FileNotFoundError as e:
+            return ToolResult(success=False, output="", error=str(e))</code></pre>
+
+<h3 id="tools-list">6.2 13 个内置工具</h3>
+
+<table>
+  <thead><tr><th>名称</th><th>类</th><th>风险</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>read_file</code></td><td><code>FileReadTool</code></td><td><span class="pill ok">safe</span></td><td>按行读取,支持 offset/limit 分页,输出带行号前缀</td></tr>
+    <tr><td><code>write_file</code></td><td><code>FileWriteTool</code></td><td><span class="pill warn">ask</span></td><td>创建新文件(默认拒绝覆盖)</td></tr>
+    <tr><td><code>edit_file</code></td><td><code>FileEditTool</code></td><td><span class="pill warn">ask</span></td><td>精确字符串替换,内部用 <code>FileEditTracker</code> 防覆盖污染</td></tr>
+    <tr><td><code>tree</code></td><td><code>TreeTool</code></td><td><span class="pill ok">safe</span></td><td>目录结构,自动忽略 <code>node_modules .git .venv</code></td></tr>
+    <tr><td><code>definitions</code></td><td><code>DefinitionsTool</code></td><td><span class="pill ok">safe</span></td><td>提取类/函数/方法签名 + 行号(基于轻量 AST)</td></tr>
+    <tr><td><code>glob</code></td><td><code>GlobTool</code></td><td><span class="pill ok">safe</span></td><td>文件匹配,按 mtime 排序</td></tr>
+    <tr><td><code>grep</code></td><td><code>GrepTool</code></td><td><span class="pill ok">safe</span></td><td>ripgrep 包装,三种输出模式 content/files/count</td></tr>
+    <tr><td><code>bash</code></td><td><code>BashTool</code></td><td><span class="pill bad">risk</span></td><td>过命令分类器,默认 30s 超时</td></tr>
+    <tr><td><code>web_search</code></td><td><code>WebSearchTool</code></td><td><span class="pill ok">safe</span></td><td>DuckDuckGo,无需 Key</td></tr>
+    <tr><td><code>web_fetch</code></td><td><code>WebFetchTool</code></td><td><span class="pill ok">safe</span></td><td>抓页面,正文抽取,长度截断</td></tr>
+    <tr><td><code>lsp</code></td><td><code>LSPTool</code></td><td><span class="pill ok">safe</span></td><td>LSP 客户端:跳转/引用/悬停/符号</td></tr>
+    <tr><td><code>sub_agent</code></td><td><code>SubAgentTool</code></td><td><span class="pill warn">ask</span></td><td>spawn 子代理执行独立任务</td></tr>
+    <tr><td><code>mcp_*</code></td><td><code>MCPTool</code></td><td>视来源</td><td>由外接 MCP 服务动态注册</td></tr>
+  </tbody>
+</table>
+
+<h3 id="tools-exec">6.3 ToolExecutor — 并发模型</h3>
+
+<p>工具执行不是简单的 <code>for tc in tool_calls: await tool.execute(tc)</code>。<code>services/tool_executor.py</code> 实现了一套基于工具语义的调度:</p>
+
+<ul>
+  <li><b>读类并发</b>:<code>read_file / glob / grep / tree / definitions / web_*</code> 互不影响,用 <code>asyncio.gather</code> 同时执行。</li>
+  <li><b>写类串行</b>:<code>write_file / edit_file / bash</code> 排队执行,避免文件状态竞争。</li>
+  <li><b>Abort 联动</b>:每个工具调用前先 <code>abort.check()</code>,中途也可被外部取消,正在跑的 bash 会收到 <code>SIGTERM</code>。</li>
+  <li><b>Hook 三段式</b>:<code>pre_tool → execute → post_tool</code>,任一阶段失败可降级或返回补救输出。</li>
+  <li><b>结果截断</b>:超过阈值(默认 ~25k tokens)的输出在写回 Session 前用 <code>truncate_tool_result</code> 折叠中部,保留首尾。</li>
+</ul>
+
+<div class="filebar"><b>tool_executor 调度逻辑(伪代码)</b><span class="lang">python</span></div>
+<pre><code class="language-python">async def run(self, calls: list[ToolCall]) -> list[ToolExecResult]:
+    # 按写/读分桶
+    reads, writes = [], []
+    for tc in calls:
+        (writes if self._is_mutating(tc.name) else reads).append(tc)
+
+    # 读类并发
+    read_results = await asyncio.gather(
+        *[self._run_one(tc) for tc in reads], return_exceptions=False
+    )
+    # 写类串行
+    write_results = []
+    for tc in writes:
+        write_results.append(await self._run_one(tc))
+
+    return read_results + write_results
+
+
+async def _run_one(self, tc: ToolCall) -> ToolExecResult:
+    self.abort.check()                       # 取消?
+    pre = await self.hooks.pre_tool(tc)
+    if pre.behavior is HookBehavior.DENY:
+        return ToolExecResult.denied(tc, pre.reason)
+    if pre.modified_input:
+        tc.arguments = pre.modified_input
+
+    perm = self.permissions.check(tc)
+    if perm.behavior is PermissionBehavior.DENY:
+        return ToolExecResult.denied(tc, perm.reason)
+    if perm.behavior is PermissionBehavior.ASK:
+        if not await self.notifier.confirm(tc, perm.reason):
+            return ToolExecResult.denied(tc, "user denied")
+
+    try:
+        result = await self.registry.get(tc.name).execute(
+            self.registry.get(tc.name).input_schema(**tc.arguments)
+        )
+    except Exception as e:
+        post = await self.hooks.post_tool_failure(tc, e)
+        if post.recovery_output:
+            return ToolExecResult.recovered(tc, post.recovery_output)
+        raise
+
+    await self.hooks.post_tool(tc, result)
+    return ToolExecResult.ok(tc, truncate_tool_result(result.output))</code></pre>
+
+<!-- ═════════════════════════════════════ 7. CONTEXT ═════════════════════════════════════ -->
+<h2 id="context">7. 上下文管理</h2>
+
+<h3 id="ctx-session">7.1 Session — 消息容器</h3>
+
+<p>Session 是消息列表的薄包装,提供按角色查询、token 计数、序列化等便利方法,具体见 <a href="../lumen/context/session.py"><code>lumen/context/session.py</code></a>。</p>
+
+<div class="filebar"><b>lumen/context/session.py 概念化</b><span class="lang">python</span></div>
+<pre><code class="language-python">@dataclass
+class Session:
+    messages: list[Message] = field(default_factory=list)
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    model: str = ""
+
+    def append(self, msg: Message) -> None:
+        self.messages.append(msg)
+
+    @property
+    def last_assistant(self) -> Message | None:
+        for m in reversed(self.messages):
+            if m.role is Role.ASSISTANT:
+                return m
+        return None
+
+    def to_openai(self)    -> list[dict]: return [m.to_openai_dict()    for m in self.messages]
+    def to_anthropic(self) -> list[dict]: return [m.to_anthropic_dict() for m in self.messages]
+
+    def to_json(self) -> str:  ...        # /save
+    @classmethod
+    def from_json(cls, s) -> "Session":  ...</code></pre>
+
+<h3 id="ctx-transcript">7.2 Transcript — JSONL 自动持久化</h3>
+
+<p>每条消息都会被追加到 <code>~/.lumen/projects/{sanitized_cwd}/{session_id}.jsonl</code>。这是 crash-safe 的核心机制——即使进程崩溃,最后一条没刷盘的消息最多丢失,前面的对话完整保留。</p>
+
+<div class="filebar"><b>lumen/context/transcript.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">_LUMEN_HOME = Path.home() / ".lumen"
+_MAX_PATH_COMPONENT = 200
+
+def sanitize_path(path: str) -> str:
+    """非字母数字 -> '-',连续 '-' 合并,过长则取 hash 后缀。"""
+    sanitized = re.sub(r"[^a-zA-Z0-9]", "-", path)
+    sanitized = re.sub(r"-{2,}", "-", sanitized).strip("-")
+    if len(sanitized) > _MAX_PATH_COMPONENT:
+        suffix = hashlib.sha256(path.encode()).hexdigest()[:12]
+        sanitized = sanitized[: _MAX_PATH_COMPONENT - 13] + "-" + suffix
+    return sanitized
+
+def get_transcript_dir(cwd: Path) -> Path:
+    return _LUMEN_HOME / "projects" / sanitize_path(str(cwd))
+
+
+class TranscriptWriter:
+    """100ms 缓冲 + 异步刷盘的追加写。"""
+    async def append(self, msg: Message) -> None: ...
+    async def flush(self) -> None: ...
+    async def close(self) -> None: ...
+
+
+class TranscriptReader:
+    """支持尾部 64KB 反向扫描快速获取 metadata,实现 /resume 秒级列表。"""
+    def list_sessions(self) -> list[SessionInfo]: ...
+    def load(self, session_id: str) -> Session: ...</code></pre>
+
+<h4>JSONL 行格式示例</h4>
+<pre><code class="language-json">{"role":"user","content":"Fix the typo in README.","ts":"2026-05-19T08:01:12Z"}
+{"role":"assistant","content":"","tool_calls":[
+  {"id":"call_1","name":"read_file","arguments":{"path":"README.md","offset":0,"limit":2000}}
+]}
+{"role":"tool","tool_call_id":"call_1","content":"     1\t# Lumen\n     2\t...\n"}
+{"role":"assistant","content":"Found the typo on line 12. Let me fix it."}
+{"_meta":{"title":"Fix README typo","last_prompt":"Fix the typo in README.","message_count":4}}</code></pre>
+
+<h3 id="ctx-compact">7.3 自动压缩</h3>
+
+<p>压缩决策模块位于 <a href="../lumen/compact/auto_compact.py"><code>compact/auto_compact.py</code></a>,核心是 <b>三个阈值</b>:</p>
+
+<div class="filebar"><b>lumen/compact/auto_compact.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">AUTOCOMPACT_BUFFER_TOKENS: int = 13_000  # 触发压缩前的安全头部
+MAX_OUTPUT_RESERVE: int       = 20_000  # 给 summary 输出预留
+MAX_CONSECUTIVE_FAILURES: int = 3        # 熔断
+
+# 公式
+#   effective_window      = context_window - min(max_output_tokens, MAX_OUTPUT_RESERVE)
+#   autocompact_threshold = effective_window - AUTOCOMPACT_BUFFER_TOKENS
+#
+# 例:200K 窗口 / 32K 输出
+#   effective      = 200_000 - 20_000 = 180_000
+#   autocompact    = 180_000 - 13_000 = 167_000
+
+@dataclass(frozen=True)
+class ContextWindowState:
+    total_tokens: int
+    context_window: int
+    effective_window: int
+    autocompact_threshold: int
+    warning_threshold: int
+    blocking_threshold: int
+
+    @property
+    def should_compact(self) -> bool:
+        return self.total_tokens >= self.autocompact_threshold
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.total_tokens >= self.blocking_threshold</code></pre>
+
+<p>触发后由 <code>Compactor</code> 调用一次"摘要专用 LLM 调用"——可以是同一个模型,也可以通过 <code>compact_model=</code> 指定一个更强 / 更便宜的:</p>
+
+<div class="filebar"><b>lumen/compact/compactor.py 概念化</b><span class="lang">python</span></div>
+<pre><code class="language-python">class Compactor:
+    async def compact(self, session: Session, keep_recent: int = 6) -> CompactionResult:
+        # 1. 切分:旧的 N-keep 条用于摘要,后 keep_recent 条原样保留
+        head = session.messages[:-keep_recent]
+        tail = session.messages[-keep_recent:]
+
+        # 2. 调 LLM 生成结构化摘要(see compact/prompt.py)
+        summary = await self._summarize(head)
+
+        # 3. 重写 session:摘要为单条 system-like 消息 + tail
+        marker = Message(Role.ASSISTANT, summary, is_compact_summary=True)
+        session.messages = [marker] + tail
+
+        return CompactionResult(
+            summary=summary,
+            messages_before=len(head) + keep_recent,
+            messages_after=len(session.messages),
+            tokens_before=..., tokens_after=...,
+            kept_recent_count=keep_recent,
+        )</code></pre>
+
+<h3 id="ctx-memory">7.4 ENGRAM 四级记忆</h3>
+
+<p>四级优先级、自动发现、低优先级先加载、高优先级覆盖:</p>
+
+<table>
+  <thead><tr><th>层</th><th>路径</th><th>典型用途</th></tr></thead>
+  <tbody>
+    <tr><td><b>SYSTEM</b></td><td><code>/etc/lumen/ENGRAM.md</code></td><td>组织级强制约定</td></tr>
+    <tr><td><b>USER</b></td><td><code>~/.engram/ENGRAM.md</code></td><td>个人偏好(命名风格、语言)</td></tr>
+    <tr><td><b>PROJECT</b></td><td><code>./ENGRAM.md</code> / <code>./.engram/rules/*.md</code></td><td>团队共享、提交到仓库</td></tr>
+    <tr><td><b>LOCAL</b></td><td><code>./ENGRAM.local.md</code></td><td>本地私有,<code>gitignore</code></td></tr>
+  </tbody>
+</table>
+
+<p>加载结果会被拼接进 system prompt,详见 <a href="../lumen/context/memory.py"><code>context/memory.py</code></a> 与 <a href="../lumen/context/system_prompt.py"><code>system_prompt.py</code></a>。</p>
+
+<h3 id="ctx-sessmem">7.5 SessionMemory — 动态会话记忆</h3>
+
+<p>这一层是"对话过程中"自动抽取出来的事实(偏好 / 项目 / 模式 / 引用 / 纠正),用 <b>TF-IDF</b> 做检索,Jaccard 去重,无需向量库。</p>
+
+<div class="filebar"><b>lumen/context/session_memory.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">class MemoryCategory(str, Enum):
+    PREFERENCE = "preference"
+    PROJECT    = "project"
+    PATTERN    = "pattern"
+    REFERENCE  = "reference"
+    CORRECTION = "correction"
+
+
+@dataclass
+class MemoryEntry:
+    content: str
+    category: MemoryCategory
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    source_turn: int = 0
+    relevance_score: float = 0.5
+
+
+_EXTRACTION_PROMPT = """\
+You are a memory extraction system. Analyse the following conversation messages
+and extract key facts that would be useful to remember for future conversations.
+
+Extract facts in these categories:
+- preference / project / pattern / reference / correction
+
+Return a JSON array of objects with these fields:
+- "content":  one-sentence fact
+- "category": one of the above
+- "relevance_score": 0.0 to 1.0
+"""
+
+
+class SessionMemoryManager:
+    EXTRACT_EVERY_N_TURNS = 3
+
+    def __init__(self, store_path: Path): ...
+    async def maybe_extract(self, session: Session, llm) -> None: ...
+    def retrieve(self, query: str, k: int = 5) -> list[MemoryEntry]:
+        """TF-IDF 相似度排名,Jaccard 去重。"""</code></pre>
+
+<h3 id="ctx-mode">7.6 ModeStack — 可叠加的系统提示层</h3>
+
+<p>把 system prompt 拆成可叠加的"模式":普通对话、代码深读模式、Review 模式等。每个 Mode 可以注入一段系统提示和一组 default tool 偏好。</p>
+
+<div class="filebar"><b>lumen/context/modes.py 概念化</b><span class="lang">python</span></div>
+<pre><code class="language-python">@dataclass
+class Mode:
+    name: str
+    system_addendum: str
+    preferred_tools: list[str] = field(default_factory=list)
+
+REVIEW_MODE = Mode(
+    name="review",
+    system_addendum="""You are in Review Mode. Work in 3 phases: DESIGN → DATA_FLOW → IMPLEMENT.
+At each phase boundary call request_approval() before continuing.""",
+    preferred_tools=["read_file", "grep", "definitions", "tree"],
+)
+
+class ModeStack:
+    def push(self, mode: Mode) -> None: ...
+    def pop(self) -> Mode | None: ...
+    def render(self) -> str:  # 拼接所有激活模式的 addendum</code></pre>
+
+<!-- ═════════════════════════════════════ 8. SERVICES ═════════════════════════════════════ -->
+<h2 id="services">8. Services 横切能力</h2>
+
+<h3 id="svc-thinking">8.1 Extended Thinking</h3>
+
+<p>三个 family、三种策略,统一在 <code>ThinkingManager.prepare_request</code> 一处分发:</p>
+
+<div class="filebar"><b>lumen/services/thinking.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">class ThinkingMode(str, Enum):
+    AUTO = "auto"; ALWAYS = "always"; NEVER = "never"; BUDGET_ONLY = "budget_only"
+
+@dataclass
+class ThinkingConfig:
+    enabled: bool = False
+    budget_tokens: int = 10_000
+    mode: ThinkingMode = ThinkingMode.AUTO
+    show_thinking: bool = False
+
+
+class ThinkingManager:
+    @staticmethod
+    def prepare_request(config: ThinkingConfig, profile: ModelProfile,
+                        payload: dict) -> dict:
+        if not config.enabled and config.mode == ThinkingMode.NEVER:
+            return payload
+        if not _should_enable(config):
+            return payload
+
+        fmt = profile.capabilities.thinking_format
+        if   fmt == "anthropic_blocks":  return _prepare_anthropic(config, payload)
+        elif fmt == "openai_reasoning":  return _prepare_openai_reasoning(config, payload)
+        else:                            return _prepare_generic_cot(payload)</code></pre>
+
+<table>
+  <thead><tr><th>family</th><th>注入点</th><th>形式</th></tr></thead>
+  <tbody>
+    <tr><td>Anthropic</td><td><code>payload["thinking"]</code></td><td><code>{"type":"enabled","budget_tokens":N}</code></td></tr>
+    <tr><td>OpenAI o-*</td><td><code>payload["reasoning_effort"]</code></td><td><code>"low"</code> / <code>"medium"</code> / <code>"high"</code></td></tr>
+    <tr><td>其他</td><td><code>system</code> 前置</td><td>注入 "Think step by step before answering."</td></tr>
+  </tbody>
+</table>
+
+<p>budget 会随上下文占用率自动缩减:接近窗口上限时,继续保留大 budget 是浪费——把空间让给实际回答。</p>
+
+<h3 id="svc-cache">8.2 Prompt Cache</h3>
+
+<p>两种策略由 <code>auto_detect_strategy(profile)</code> 决定:</p>
+
+<table>
+  <thead><tr><th>Strategy</th><th>触发条件</th><th>机制</th></tr></thead>
+  <tbody>
+    <tr><td><code>ANTHROPIC_NATIVE</code></td><td>Claude 系列且 <code>cache_format == "anthropic_native"</code></td><td>在 system / tools / 最近 N 条 user message 上插入 <code>{"cache_control":{"type":"ephemeral"}}</code></td></tr>
+    <tr><td><code>HASH_BASED</code></td><td>其他兼容 OpenAI 的 Provider</td><td>统计 message hash 命中,本地估算节省 token,对上游 API 无侵入</td></tr>
+    <tr><td><code>NONE</code></td><td>不支持</td><td>透传</td></tr>
+  </tbody>
+</table>
+
+<div class="filebar"><b>lumen/services/prompt_cache.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">_ROLLING_CACHE_BREAK_COUNT = 3  # 在最近 3 条 user msg 上滚动打 cache 标记
+
+@dataclass
+class CacheStats:
+    cache_hits: int = 0
+    cache_misses: int = 0
+    estimated_tokens_saved: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
+
+    @property
+    def hit_rate(self) -> float:
+        total = self.cache_hits + self.cache_misses
+        return 0.0 if total == 0 else round(self.cache_hits / total * 100, 1)</code></pre>
+
+<h3 id="svc-structured">8.3 结构化输出</h3>
+
+<p>用 Pydantic 描述目标 schema,Lumen 根据 profile 自动选择最佳路径:</p>
+
+<table>
+  <thead><tr><th>路径</th><th>家</th><th>机制</th></tr></thead>
+  <tbody>
+    <tr><td><code>json_schema</code></td><td>OpenAI (4o+)</td><td>原生 <code>response_format: {"type":"json_schema","json_schema":...,"strict":true}</code></td></tr>
+    <tr><td><code>anthropic_tool</code></td><td>Anthropic</td><td>把 schema 包装成单一 tool,强制 <code>tool_choice</code> 锁定,解析 tool_use 即返回</td></tr>
+    <tr><td><code>json_mode</code></td><td>支持 JSON mode 的兼容 API</td><td>设 <code>response_format: {"type":"json_object"}</code> + system 注入 schema 描述</td></tr>
+    <tr><td><code>none</code></td><td>其他</td><td>system 注入 schema + 后处理正则提取,Pydantic 校验失败则重试 1 次</td></tr>
+  </tbody>
+</table>
+
+<div class="filebar"><b>使用示例</b><span class="lang">python</span></div>
+<pre><code class="language-python">from pydantic import BaseModel
+from lumen import Agent
+
+class CodeAnalysis(BaseModel):
+    complexity: str
+    issues: list[str]
+    suggestions: list[str]
+
+result = await agent.query("分析 src/auth.py", schema=CodeAnalysis)
+assert isinstance(result.data, CodeAnalysis)
+print(result.data.suggestions)</code></pre>
+
+<h3 id="svc-perm">8.4 权限模型</h3>
+
+<p>四档 session 级 PermissionMode + 一份规则表,决定每个工具调用 <code>ALLOW / ASK / DENY</code>:</p>
+
+<table>
+  <thead><tr><th>PermissionMode</th><th>含义</th><th>典型场景</th></tr></thead>
+  <tbody>
+    <tr><td><code>DEFAULT</code></td><td>写/编辑/risky bash 都问</td><td>交互式开发</td></tr>
+    <tr><td><code>ACCEPT_EDITS</code></td><td>自动允许 write/edit;bash 仍走分类器</td><td>大批量重构</td></tr>
+    <tr><td><code>PLAN</code></td><td>只读研究,拒绝一切 write/edit/bash</td><td>代码理解阶段</td></tr>
+    <tr><td><code>BYPASS</code></td><td>统统放行(慎用)</td><td>无人值守 CI</td></tr>
+  </tbody>
+</table>
+
+<div class="filebar"><b>lumen/services/permissions.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">ALWAYS_ALLOW_TOOLS = frozenset({"read_file", "glob", "grep", "tree", "definitions"})
+ASK_TOOLS          = frozenset({"write_file", "edit_file"})
+
+DANGEROUS_COMMANDS = frozenset({
+    "rm -rf /", "rm -rf ~", "rm -rf *",
+    "mkfs", "dd if=", ":(){:|:&};:",        # fork bomb
+    "chmod -R 777 /", "mv / ", "> /dev/sda",
+})
+
+DANGEROUS_PREFIXES = (
+    "rm -rf /", "rm -rf ~", "mkfs.", "dd if=/dev",
+    "chmod -R 777 /", ":(){ :",
+)
+
+RISKY_BASH_PATTERNS = (
+    r"\brm\b.*-[rR]",
+    r"\bgit\s+push\b",
+    r"\bgit\s+reset\s+--hard",
+    r"\bgit\s+checkout\s+\.",
+    r"\bgit\s+clean\b",
+    r"\bsudo\b",
+    r"\bcurl\b.*\|\s*sh",
+    r"\bwget\b.*\|\s*sh",
+    r"\bnpm\s+publish\b",
+    r"\bdocker\s+rm\b",
+    r"\bkubectl\s+delete\b",
+)</code></pre>
+
+<h3 id="svc-classifier">8.5 Command Classifier — 特征评分</h3>
+
+<p>Bash 命令的"危险度"用四维加权打分而不是单纯 regex,既精确又可解释:</p>
+
+<div class="filebar"><b>lumen/services/command_classifier.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">class RiskLevel(str, Enum):
+    SAFE = "safe"; LOW = "low"; MEDIUM = "medium"; HIGH = "high"; CRITICAL = "critical"
+
+class ComponentType(str, Enum):
+    EXECUTABLE = "executable"; FLAG = "flag"; ARGUMENT = "argument"
+    PIPE = "pipe"; REDIRECT = "redirect"; SUBSHELL = "subshell"
+
+
+EXECUTABLE_RISK: dict[str, float] = {
+    "ls": 0.0, "cat": 0.0, "grep": 0.0,
+    "git": 0.1, "python": 0.1, "make": 0.2,
+    "curl": 0.3, "wget": 0.3, "ssh": 0.4, "rsync": 0.3,
+    "rm": 0.7, "shred": 0.8,
+    "sudo": 0.9, "su": 0.9, "doas": 0.9,
+    "dd": 0.8, "mkfs": 0.95, "fdisk": 0.95,
+    "iptables": 0.8, "eval": 0.8, "exec": 0.7,
+    # ... (~80 项)
+}
+
+FLAG_RISK: dict[str, float] = {
+    "--force": 0.3, "-f": 0.2, "-rf": 0.8, "-fr": 0.8,
+    "--no-preserve-root": 1.0,
+    "--hard": 0.4, "--recursive": 0.3, "-r": 0.2,
+    "--yes": 0.2, "--no-verify": 0.3, "--delete": 0.4,
+    # ...
+}</code></pre>
+
+<h4>四维加权公式</h4>
+
+<table>
+  <thead><tr><th>维度</th><th>权重</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>EXECUTABLE</td><td>0.4</td><td>主程序自身的危险度(<code>rm</code> 0.7, <code>sudo</code> 0.9)</td></tr>
+    <tr><td>FLAG</td><td>0.2</td><td>标志位风险(<code>-rf</code> 0.8, <code>--help</code> 0)</td></tr>
+    <tr><td>ARGUMENT</td><td>0.1</td><td>参数路径敏感度(<code>/</code> 0.9, <code>./src</code> 0)</td></tr>
+    <tr><td>COMPOSITION</td><td>0.3</td><td>组合危险:<code>curl &#x7c; bash</code> 0.9,子 shell 0.3</td></tr>
+  </tbody>
+</table>
+
+<div class="callout note">
+  <span class="lab">上下文敏感</span> <code>-f</code> 单独 0.2,但出现在 <code>rm -f</code> 中提升为 0.6;<code>curl http://...</code> 0.3,但管道到 <code>sh</code> 飙到 0.95。
+</div>
+
+<h3 id="svc-hooks">8.6 Hook 生命周期</h3>
+
+<p>三段式拦截器:</p>
+
+<div class="filebar"><b>HookRegistry 概念化</b><span class="lang">python</span></div>
+<pre><code class="language-python">class HookBehavior(str, Enum):
+    PROCEED = "proceed"; MODIFY = "modify"; DENY = "deny"
+
+
+@dataclass
+class PreToolHookResult:
+    behavior: HookBehavior = HookBehavior.PROCEED
+    modified_input: dict | None = None
+    reason: str = ""
+
+
+@dataclass
+class PostToolHookResult:
+    modified_output: str | None = None
+
+
+@dataclass
+class PostToolFailureHookResult:
+    recovery_output: str | None = None      # 把异常变成正常输出
+
+
+class HookRegistry:
+    def add_pre(self, tool_name: str, fn: Callable[[ToolCall], PreToolHookResult]): ...
+    def add_post(self, tool_name: str, fn): ...
+    def add_post_failure(self, tool_name: str, fn): ...</code></pre>
+
+<p>典型用法:在 <code>write_file</code> 前注入"必须经过 lint"、在 <code>bash</code> 失败时根据错误码补救等。</p>
+
+<h3 id="svc-subagent">8.7 SubAgent — 子代理</h3>
+
+<div class="filebar"><b>lumen/services/subagent.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">@dataclass
+class SubAgentConfig:
+    prompt: str
+    description: str = ""
+    model: str | None = None
+    tools: list[Tool] | None = None
+    system_prompt: str | None = None
+    max_tool_calls: int = 20
+    run_in_background: bool = False
+    name: str | None = None
+
+
+@dataclass
+class SubAgentResult:
+    content: str
+    success: bool
+    agent_id: str
+    description: str
+    token_usage: TokenUsage
+    tool_calls_count: int
+    duration_ms: float
+    error: str | None = None
+
+
+class SubAgentManager:
+    """
+    Isolation:
+      - File cache: CLONED   (no cross-contamination)
+      - Abort:      CHILD of parent (parent abort -> child abort,反之不影响)
+      - Tools:      inherited or restricted subset
+      - Session:    FRESH 独立对话历史
+    """
+    def __init__(self, parent_agent: Agent) -> None: ...
+    async def spawn(self, config: SubAgentConfig) -> SubAgentResult | str: ...
+    async def get_result(self, agent_id: str) -> SubAgentResult | None: ...
+    async def kill(self, agent_id: str) -> bool: ...</code></pre>
+
+<p>调用方式:</p>
+
+<pre><code class="language-python">agent.enable_subagents()                          # 注册 sub_agent 工具,让 LLM 自己调用
+
+# 或编程式
+result = await agent.subagent_manager.spawn(SubAgentConfig(
+    prompt="分析 auth 模块的安全性",
+    description="安全审计",
+    run_in_background=True,
+))</code></pre>
+
+<h3 id="svc-retry">8.8 持久化重试</h3>
+
+<p>面向 CI / 批处理的"决不放弃"模式——可达数小时,跨模型阶梯升级,失败发 Webhook:</p>
+
+<div class="filebar"><b>lumen/services/persistent_retry.py 概念化</b><span class="lang">python</span></div>
+<pre><code class="language-python">@dataclass
+class PersistentRetryConfig:
+    enabled: bool = False
+    escalation_threshold: int = 5                   # 同模型失败 N 次后升级
+    fallback_models: list[str] = field(default_factory=list)
+    total_timeout_seconds: int = 3600
+    backoff_initial: float = 1.0
+    backoff_max: float = 60.0
+    webhook_url: str | None = None
+
+
+@dataclass
+class RetryLogEntry:
+    ts: str
+    model: str
+    error_type: ErrorType
+    detail: str
+    will_retry: bool
+
+
+@dataclass
+class PersistentRetryResult:
+    success: bool
+    final_model: str
+    attempts: int
+    log: list[RetryLogEntry]</code></pre>
+
+<h3 id="svc-mcp">8.9 MCP 集成</h3>
+
+<p><code>services/mcp/</code> 提供轻量 MCP(Model Context Protocol)客户端,把外部进程提供的工具动态注册为 Lumen 工具,统一进入工具循环。</p>
+
+<div class="filebar"><b>MCP 关键类</b><span class="lang">python</span></div>
+<pre><code class="language-python">@dataclass
+class MCPServerConfig:
+    name: str
+    command: list[str] | None = None      # stdio server: 子进程命令
+    url: str | None = None                # http server
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class MCPServerState:
+    name: str
+    status: Literal["starting","ready","failed","stopped"]
+    tools: list[MCPTool]
+
+
+class MCPManager:
+    async def start(self, cfg: MCPServerConfig) -> MCPServerState: ...
+    async def stop(self, name: str) -> None: ...
+    def list_tools(self) -> list[Tool]:    # 直接喂给 Agent(tools=...)</code></pre>
+
+<!-- ═════════════════════════════════════ 9. SAFETY ═════════════════════════════════════ -->
+<h2 id="safety">9. 安全 / 权限决策矩阵</h2>
+
+<p>每个工具调用进入执行前,会顺次经过 <b>4 个判定</b>,任一阶段返回 DENY/拦截都会立刻终止:</p>
+
+<div class="diagram">
+<svg class="lumen-diagram" viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"
+            markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a8552f"/>
+    </marker>
+    <marker id="arr3bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"
+            markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b54b3d"/>
+    </marker>
+  </defs>
+
+  <!-- start -->
+  <rect class="node-bg" x="340" y="20" width="220" height="40" rx="20"/>
+  <text class="node-title" x="450" y="44">ToolCall(tc) 进入执行管道</text>
+
+  <!-- 4 stages -->
+  <g>
+    <!-- stage 1 -->
+    <rect class="node-bg accent" x="220" y="90" width="460" height="58" rx="6"/>
+    <circle cx="250" cy="119" r="14" fill="#a8552f"/>
+    <text class="node-title" x="250" y="121" style="fill:#fff">1</text>
+    <text class="node-title" x="290" y="112" style="text-anchor:start">Abort.check()</text>
+    <text class="node-sub"   x="290" y="130" style="text-anchor:start">用户或父代理取消 → AbortError</text>
+
+    <!-- stage 2 -->
+    <rect class="node-bg accent" x="220" y="160" width="460" height="58" rx="6"/>
+    <circle cx="250" cy="189" r="14" fill="#a8552f"/>
+    <text class="node-title" x="250" y="191" style="fill:#fff">2</text>
+    <text class="node-title" x="290" y="182" style="text-anchor:start">PreToolHook</text>
+    <text class="node-sub"   x="290" y="200" style="text-anchor:start">PROCEED · MODIFY 输入 · DENY 阻断</text>
+
+    <!-- stage 3 -->
+    <rect class="node-bg accent" x="220" y="230" width="460" height="58" rx="6"/>
+    <circle cx="250" cy="259" r="14" fill="#a8552f"/>
+    <text class="node-title" x="250" y="261" style="fill:#fff">3</text>
+    <text class="node-title" x="290" y="252" style="text-anchor:start">PermissionChecker</text>
+    <text class="node-sub"   x="290" y="270" style="text-anchor:start">PermissionMode + 规则表 → ALLOW / ASK / DENY</text>
+
+    <!-- stage 4 -->
+    <rect class="node-bg accent" x="220" y="300" width="460" height="78" rx="6"/>
+    <circle cx="250" cy="339" r="14" fill="#a8552f"/>
+    <text class="node-title" x="250" y="341" style="fill:#fff">4</text>
+    <text class="node-title" x="290" y="320" style="text-anchor:start">CommandClassifier  (仅 bash)</text>
+    <text class="node-sub"   x="290" y="340" style="text-anchor:start">四维加权 (executable·flag·arg·composition)</text>
+    <text class="node-sub"   x="290" y="358" style="text-anchor:start">SAFE/LOW → ALLOW · MEDIUM → ASK · HIGH → ASK+警告 · CRITICAL → DENY</text>
+
+    <!-- arrows down -->
+    <path class="arrow" d="M 450 60  L 450 88"  marker-end="url(#arr3)"/>
+    <path class="arrow" d="M 450 148 L 450 158" marker-end="url(#arr3)"/>
+    <path class="arrow" d="M 450 218 L 450 228" marker-end="url(#arr3)"/>
+    <path class="arrow" d="M 450 288 L 450 298" marker-end="url(#arr3)"/>
+  </g>
+
+  <!-- side branches: DENY exits -->
+  <rect class="node-bg bad" x="720" y="105" width="140" height="32" rx="6"/>
+  <text class="node-title" x="790" y="123">→ DENY / 终止</text>
+  <path class="arrow" d="M 680 119 L 718 121" stroke="#b54b3d" marker-end="url(#arr3bad)"/>
+
+  <rect class="node-bg bad" x="720" y="175" width="140" height="32" rx="6"/>
+  <text class="node-title" x="790" y="193">→ DENY / 终止</text>
+  <path class="arrow" d="M 680 189 L 718 191" stroke="#b54b3d" marker-end="url(#arr3bad)"/>
+
+  <rect class="node-bg bad" x="720" y="245" width="140" height="32" rx="6"/>
+  <text class="node-title" x="790" y="263">→ DENY / 终止</text>
+  <path class="arrow" d="M 680 259 L 718 261" stroke="#b54b3d" marker-end="url(#arr3bad)"/>
+
+  <rect class="node-bg bad" x="720" y="320" width="140" height="32" rx="6"/>
+  <text class="node-title" x="790" y="338">→ DENY / 终止</text>
+  <path class="arrow" d="M 680 336 L 718 336" stroke="#b54b3d" marker-end="url(#arr3bad)"/>
+
+  <!-- success exit -->
+  <rect class="node-bg ok" x="340" y="400" width="220" height="44" rx="22"/>
+  <text class="node-title" x="450" y="425">tool.execute(input)  ✓</text>
+  <path class="arrow" d="M 450 378 L 450 398" marker-end="url(#arr3)"/>
+</svg>
+<div class="caption">图 9-1 · 工具调用必须依次通过 4 个判定阶段,任一阶段返回 DENY 立刻终止。</div>
+</div>
+
+<h4>判定矩阵示例</h4>
+<table>
+  <thead><tr><th>调用</th><th>DEFAULT</th><th>ACCEPT_EDITS</th><th>PLAN</th><th>BYPASS</th></tr></thead>
+  <tbody>
+    <tr><td><code>read_file</code></td><td>ALLOW</td><td>ALLOW</td><td>ALLOW</td><td>ALLOW</td></tr>
+    <tr><td><code>edit_file</code></td><td>ASK</td><td>ALLOW</td><td>DENY</td><td>ALLOW</td></tr>
+    <tr><td><code>bash: ls</code></td><td>ALLOW</td><td>ALLOW</td><td>DENY</td><td>ALLOW</td></tr>
+    <tr><td><code>bash: git push</code></td><td>ASK</td><td>ASK</td><td>DENY</td><td>ALLOW</td></tr>
+    <tr><td><code>bash: rm -rf /</code></td><td>DENY</td><td>DENY</td><td>DENY</td><td>DENY*</td></tr>
+  </tbody>
+</table>
+<p class="muted">* BYPASS 也阻挡命中 <code>DANGEROUS_COMMANDS</code> 表的命令——这一层是硬约束,无法绕过。</p>
+
+<!-- ═════════════════════════════════════ 10. EXTEND ═════════════════════════════════════ -->
+<h2 id="extending">10. 扩展点</h2>
+
+<h3>10.1 自定义 Tool</h3>
+
+<pre><code class="language-python">from pydantic import BaseModel
+from lumen.tools import Tool, ToolResult
+
+class TodoInput(BaseModel):
+    action: Literal["add", "list", "done"]
+    text: str | None = None
+    id: int | None = None
+
+class TodoTool(Tool[TodoInput]):
+    name = "todo"
+    description = "Manage an in-memory TODO list."
+    input_schema = TodoInput
+
+    def __init__(self):
+        self._items: list[dict] = []
+
+    async def execute(self, inp: TodoInput) -> ToolResult:
+        if inp.action == "add":
+            self._items.append({"id": len(self._items), "text": inp.text, "done": False})
+            return ToolResult(success=True, output=f"added #{len(self._items)-1}")
+        if inp.action == "list":
+            return ToolResult(success=True, output=json.dumps(self._items, indent=2))
+        if inp.action == "done":
+            self._items[inp.id]["done"] = True
+            return ToolResult(success=True, output=f"done #{inp.id}")
+
+agent = Agent(api_key=..., model=..., tools=[TodoTool(), ...])</code></pre>
+
+<h3>10.2 自定义 Hook</h3>
+
+<pre><code class="language-python">from lumen import HookRegistry, PreToolHookResult, HookBehavior
+
+hooks = HookRegistry()
+
+async def deny_root_writes(tc):
+    p = tc.arguments.get("path", "")
+    if p.startswith("/etc") or p.startswith("/usr"):
+        return PreToolHookResult(behavior=HookBehavior.DENY,
+                                 reason="禁止写入系统路径")
+    return PreToolHookResult()
+
+hooks.add_pre("write_file", deny_root_writes)
+hooks.add_pre("edit_file",  deny_root_writes)
+
+agent = Agent(api_key=..., model=..., hooks=hooks)</code></pre>
+
+<h3>10.3 自定义 Provider</h3>
+
+<p>实现 <code>BaseProvider.chat / stream</code> 两个方法即可。常见情况是直接复用 <code>OpenAICompatProvider</code> 改一下 <code>base_url</code>;只有当 API 形状根本不同(如 Gemini 早期格式)才需要新写。</p>
+
+<!-- ═════════════════════════════════════ 11. CLI ═════════════════════════════════════ -->
+<h2 id="cli">11. CLI 与 Slash 命令</h2>
+
+<p>CLI 入口在 <a href="../chat.py"><code>chat.py</code></a>,Slash 命令解析在 <a href="../chat_commands.py"><code>chat_commands.py</code></a>。</p>
+
+<h4>启动方式</h4>
+<pre><code class="language-bash">python chat.py                                       # 走配置向导
+python chat.py --model gpt-4o --api-key sk-proj-...  # OpenAI
+python chat.py --model claude-sonnet-4-6 --api-key sk-ant-...
+python chat.py --model llama3.1 --base-url http://localhost:11434/v1  # Ollama,无需 Key</code></pre>
+
+<h4>Slash 命令清单</h4>
+<table>
+  <thead><tr><th>命令</th><th>作用</th></tr></thead>
+  <tbody>
+    <tr><td><code>/help</code></td><td>显示帮助</td></tr>
+    <tr><td><code>/status</code></td><td>Token 用量、会话 ID、模型、缓存命中率</td></tr>
+    <tr><td><code>/mode code</code></td><td>开启代码深读模式(push REVIEW_MODE 类似)</td></tr>
+    <tr><td><code>/mode general</code></td><td>切回通用模式</td></tr>
+    <tr><td><code>/compact</code></td><td>手动触发上下文压缩</td></tr>
+    <tr><td><code>/reset</code></td><td>清空对话历史</td></tr>
+    <tr><td><code>/save</code></td><td>导出会话 JSON(transcript 已自动持久化)</td></tr>
+    <tr><td><code>/load</code></td><td>从 JSON 恢复</td></tr>
+    <tr><td><code>/resume</code></td><td>列出 <code>~/.lumen/projects/&lt;cwd&gt;/*.jsonl</code> 选择恢复</td></tr>
+    <tr><td><code>/config</code></td><td>重新配置模型 / API Key</td></tr>
+    <tr><td><code>/quit</code></td><td>退出(等价 <kbd>Ctrl</kbd>+<kbd>D</kbd>)</td></tr>
+  </tbody>
+</table>
+
+<!-- ═════════════════════════════════════ 12. TREE ═════════════════════════════════════ -->
+<h2 id="tree">12. 目录结构总览</h2>
+
+<div class="tree">
+<ul>
+  <li><span class="dir">lumen/</span> <span class="cmt">项目根</span>
+    <ul>
+      <li><span class="file">chat.py</span> <span class="cmt">CLI 主入口(REPL,~95KB)</span></li>
+      <li><span class="file">chat_commands.py</span> <span class="cmt">Slash 命令分发</span></li>
+      <li><span class="file">pyproject.toml</span> <span class="cmt">元数据 + 依赖</span></li>
+      <li><span class="file">README.md · README.zh.md</span></li>
+      <li><span class="dir">examples/</span> <span class="cmt">演示与生成产物(pomodoro / 五子棋 / 贪吃蛇 …)</span></li>
+      <li><span class="dir">tests/</span></li>
+      <li><span class="dir">lumen/</span> <span class="cmt">Python 包</span>
+        <ul>
+          <li><span class="file">__init__.py</span> <span class="cmt">公开 API,__version__ = "0.5.0"</span></li>
+          <li><span class="file">_types.py</span> <span class="cmt">Message · ToolCall · Role · TokenUsage</span></li>
+          <li><span class="file">agent.py</span> <span class="cmt">Agent 主类(编排层)</span></li>
+          <li><span class="file">i18n.py</span> <span class="cmt">EN / 中文 UI 文案切换</span></li>
+
+          <li><span class="dir">providers/</span>
+            <ul>
+              <li><span class="file">base.py</span> <span class="cmt">BaseProvider 协议</span></li>
+              <li><span class="file">factory.py</span> <span class="cmt">create_provider() 路由</span></li>
+              <li><span class="file">anthropic.py</span> <span class="cmt">Anthropic 实现</span></li>
+              <li><span class="file">openai_compat.py</span> <span class="cmt">OpenAI 兼容实现</span></li>
+              <li><span class="file">model_profiles.py</span> <span class="cmt">各模型能力卡</span></li>
+            </ul>
+          </li>
+
+          <li><span class="dir">tools/</span>
+            <ul>
+              <li><span class="file">base.py</span> <span class="cmt">Tool ABC + ToolResult</span></li>
+              <li><span class="file">registry.py</span> <span class="cmt">名称索引 + schema 拼装</span></li>
+              <li><span class="file">file_read.py · file_write.py · file_edit.py</span></li>
+              <li><span class="file">tree.py · definitions.py · glob.py · grep.py</span></li>
+              <li><span class="file">bash.py</span></li>
+              <li><span class="file">web_search.py · web_fetch.py</span></li>
+              <li><span class="file">lsp.py</span></li>
+              <li><span class="file">subagent_tool.py · mcp_tool.py</span></li>
+              <li><span class="file">approval.py</span> <span class="cmt">request_approval(Review 模式)</span></li>
+              <li><span class="file">task_tools.py · discovery_tools.py</span></li>
+            </ul>
+          </li>
+
+          <li><span class="dir">services/</span>
+            <ul>
+              <li><span class="file">thinking.py</span> <span class="cmt">Extended Thinking 三策略</span></li>
+              <li><span class="file">prompt_cache.py</span> <span class="cmt">Anthropic-native + Hash-based</span></li>
+              <li><span class="file">structured_output.py</span> <span class="cmt">JSON Schema · Tool-trick · JSON mode</span></li>
+              <li><span class="file">permissions.py</span> <span class="cmt">PermissionMode + 规则表</span></li>
+              <li><span class="file">command_classifier.py</span> <span class="cmt">四维加权评分</span></li>
+              <li><span class="file">hooks.py</span> <span class="cmt">pre/post tool 钩子</span></li>
+              <li><span class="file">subagent.py</span> <span class="cmt">SubAgentManager</span></li>
+              <li><span class="file">persistent_retry.py</span> <span class="cmt">阶梯模型升级</span></li>
+              <li><span class="file">retry.py</span> <span class="cmt">普通退避重试</span></li>
+              <li><span class="file">abort.py</span> <span class="cmt">AbortController · AbortError</span></li>
+              <li><span class="file">errors.py</span> <span class="cmt">异常分类</span></li>
+              <li><span class="file">tool_executor.py</span> <span class="cmt">并发/串行 + Hook + Perm + Truncate</span></li>
+              <li><span class="file">lsp.py · file_edit_tracker.py</span></li>
+              <li><span class="file">review_state.py</span> <span class="cmt">Review Mode 状态机</span></li>
+              <li><span class="file">notifier.py</span> <span class="cmt">桌面通知</span></li>
+              <li><span class="file">auto_dream.py</span> <span class="cmt">后台记忆固化</span></li>
+              <li><span class="file">skills.py</span> <span class="cmt">任务模板(JSON / YAML)</span></li>
+              <li><span class="dir">mcp/</span> <span class="cmt">MCP 客户端</span></li>
+            </ul>
+          </li>
+
+          <li><span class="dir">context/</span>
+            <ul>
+              <li><span class="file">session.py</span> <span class="cmt">Session(消息容器)</span></li>
+              <li><span class="file">transcript.py</span> <span class="cmt">JSONL 持久化 · sanitize_path</span></li>
+              <li><span class="file">session_memory.py</span> <span class="cmt">动态会话记忆(TF-IDF)</span></li>
+              <li><span class="file">memory.py</span> <span class="cmt">ENGRAM 四级加载</span></li>
+              <li><span class="file">system_prompt.py</span> <span class="cmt">system prompt 拼装</span></li>
+              <li><span class="file">modes.py</span> <span class="cmt">Mode · ModeStack</span></li>
+              <li><span class="file">git_state.py</span> <span class="cmt">git status 注入</span></li>
+              <li><span class="file">project_scanner.py</span></li>
+            </ul>
+          </li>
+
+          <li><span class="dir">compact/</span>
+            <ul>
+              <li><span class="file">auto_compact.py</span> <span class="cmt">阈值计算 · ContextWindowState</span></li>
+              <li><span class="file">compactor.py</span> <span class="cmt">摘要 LLM 调用</span></li>
+              <li><span class="file">prompt.py</span> <span class="cmt">压缩提示词模板</span></li>
+            </ul>
+          </li>
+
+          <li><span class="dir">tokens/</span>
+            <ul>
+              <li><span class="file">counter.py</span> <span class="cmt">tiktoken 计数 + 模型映射</span></li>
+            </ul>
+          </li>
+
+          <li><span class="dir">utils/</span>
+            <ul>
+              <li><span class="file">file_state_cache.py</span> <span class="cmt">文件状态 LRU(防外部改动覆盖)</span></li>
+              <li><span class="file">tool_result_truncation.py</span> <span class="cmt">中部折叠保留首尾</span></li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+</div>
+
+<!-- ═════════════════════════════════════ 13. PERF ═════════════════════════════════════ -->
+<h2 id="perf">13. 性能 & 工程取舍</h2>
+
+<h4>13.1 为什么不引入向量库?</h4>
+<ul>
+  <li><b>SessionMemory</b> 量级通常 &lt; 200 条事实,TF-IDF + Jaccard 在内存里搜索 ms 级,体验已足够好。</li>
+  <li>向量库会引入 sqlite-vss / faiss / chromadb 这类重依赖,与"轻量内嵌 SDK"定位冲突。</li>
+  <li>真正需要语义检索的场景(知识库 RAG)交给上层应用做,Lumen 不替它做选择。</li>
+</ul>
+
+<h4>13.2 为什么读类工具并发、写类串行?</h4>
+<ul>
+  <li>读操作语义上无副作用,延迟瓶颈基本是磁盘/网络 IO,并发收益显著。</li>
+  <li>写操作存在文件状态依赖(<code>edit_file</code> 依赖最新内容),串行执行避免"两个 edit 互相覆盖"的脏写问题——<code>FileEditTracker</code> 也假定单写者。</li>
+</ul>
+
+<h4>13.3 为什么 ENGRAM 是 Markdown 而不是 YAML/JSON?</h4>
+<ul>
+  <li>记忆是给 LLM 看的,自然语言段落比结构化字段更易消费。</li>
+  <li>Markdown 标题可以被 LLM 自然识别为分节,无需解析。</li>
+  <li>用户在编辑器里手写记忆零门槛。</li>
+</ul>
+
+<h4>13.4 关键参数默认值表</h4>
+<table>
+  <thead><tr><th>位置</th><th>常量</th><th>默认</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td><code>compact/auto_compact.py</code></td><td>AUTOCOMPACT_BUFFER_TOKENS</td><td>13_000</td><td>触发压缩前的安全 buffer</td></tr>
+    <tr><td><code>compact/auto_compact.py</code></td><td>MAX_OUTPUT_RESERVE</td><td>20_000</td><td>留给 summary 输出</td></tr>
+    <tr><td><code>compact/auto_compact.py</code></td><td>MAX_CONSECUTIVE_FAILURES</td><td>3</td><td>压缩熔断</td></tr>
+    <tr><td><code>compact/auto_compact.py</code></td><td>MANUAL_COMPACT_BUFFER</td><td>3_000</td><td><code>/compact</code> 阻塞阈值</td></tr>
+    <tr><td><code>services/prompt_cache.py</code></td><td>_ROLLING_CACHE_BREAK_COUNT</td><td>3</td><td>滚动 cache 标记的 user 消息条数</td></tr>
+    <tr><td><code>context/session_memory.py</code></td><td>EXTRACT_EVERY_N_TURNS</td><td>3</td><td>多少轮抽一次事实</td></tr>
+    <tr><td><code>agent.py</code></td><td>max_tool_calls</td><td>20</td><td>单 turn 工具循环上限</td></tr>
+    <tr><td><code>agent.py</code></td><td>keep_recent</td><td>6</td><td>压缩时保留尾部消息数</td></tr>
+    <tr><td><code>agent.py</code></td><td>timeout</td><td>120s</td><td>HTTP 超时</td></tr>
+    <tr><td><code>agent.py</code></td><td>temperature</td><td>0.7</td><td>采样温度</td></tr>
+    <tr><td><code>context/transcript.py</code></td><td>flush 间隔</td><td>100ms</td><td>JSONL 异步刷盘</td></tr>
+    <tr><td><code>context/transcript.py</code></td><td>_MAX_PATH_COMPONENT</td><td>200</td><td>路径净化最大长度</td></tr>
+  </tbody>
+</table>
+
+<div class="footer">
+  本文档基于 <code>lumen/</code> 项目 <b>v0.5.0</b> 源码生成,涵盖 <code>agent.py</code> / <code>providers/</code> / <code>tools/</code> / <code>services/</code> / <code>context/</code> / <code>compact/</code> 等所有核心模块。<br/>
+  生成路径:<code>lumen/docs/design.html</code>
+</div>
+
+</main>
+</div>
+</body>
+</html>
