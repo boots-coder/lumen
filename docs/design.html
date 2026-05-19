@@ -232,6 +232,7 @@ hr{border:0;border-top:1px solid var(--border);margin:36px 0}
     </li>
     <li><a href="#context">上下文管理</a>
       <ol>
+        <li><a href="#ctx-builder">SystemPromptBuilder</a></li>
         <li><a href="#ctx-session">Session</a></li>
         <li><a href="#ctx-transcript">Transcript JSONL</a></li>
         <li><a href="#ctx-compact">自动压缩</a></li>
@@ -348,8 +349,8 @@ hr{border:0;border-top:1px solid var(--border);margin:36px 0}
 
   <rect class="node-bg accent" x="245" y="142" width="170" height="80" rx="6"/>
   <text class="node-title" x="330" y="170">SystemPromptBuilder</text>
-  <text class="node-sub"   x="330" y="190">ENGRAM · Git</text>
-  <text class="node-sub"   x="330" y="207">Modes · SessionMemory</text>
+  <text class="node-sub"   x="330" y="190">静态 prompt(可缓存)</text>
+  <text class="node-sub"   x="330" y="207">+ ContextReminder</text>
 
   <rect class="node-bg accent" x="430" y="142" width="170" height="80" rx="6"/>
   <text class="node-title" x="515" y="170">Provider</text>
@@ -465,8 +466,8 @@ hr{border:0;border-top:1px solid var(--border);margin:36px 0}
   <!-- 4. system prompt build -->
   <rect class="node-bg accent" x="350" y="270" width="200" height="56" rx="6"/>
   <text class="node-title" x="450" y="290">SystemPromptBuilder</text>
-  <text class="node-sub"   x="450" y="306">ENGRAM · Git · Modes</text>
-  <text class="node-sub"   x="450" y="320">+ SessionMemory(TF-IDF)</text>
+  <text class="node-sub"   x="450" y="306">静态 system(~3KB, 可缓存)</text>
+  <text class="node-sub"   x="450" y="320">+ &lt;system-reminder&gt; user 消息</text>
   <path class="arrow" d="M 450 240 L 450 268" marker-end="url(#arr2)"/>
   <text class="arrow-label" x="460" y="258">no</text>
   <path class="arrow thin" d="M 760 224 C 760 260, 600 260, 540 280" marker-end="url(#arrThin)"/>
@@ -655,8 +656,14 @@ class TokenUsage:
     if self.auto_compact and state.should_compact:
         await self._compactor.compact(self.session, keep_recent=self.keep_recent)
 
-    # 3. 构造 system prompt(ENGRAM + Git + Modes + SessionMemory)
-    system = self._system_builder.build()
+    # 3. 构造静态 system prompt(角色+规则+工具规范+Mode 段),~3KB,可缓存
+    system = await self._system_builder.build()
+
+    # 3b. 构造 ContextReminder(cwd + 日期 + Git + ENGRAM),包成 <system-reminder>
+    #     作为首条 user 消息注入(每个 session 只做一次,memoize)
+    reminder = await self._system_builder.build_context_reminder()
+    if reminder and not self.session.has_reminder():
+        self.session.prepend_reminder(reminder)
 
     # 4. 工具循环
     for round_idx in range(self.max_tool_calls):
@@ -939,7 +946,146 @@ async def _run_one(self, tc: ToolCall) -> ToolExecResult:
 <!-- ═════════════════════════════════════ 7. CONTEXT ═════════════════════════════════════ -->
 <h2 id="context">7. 上下文管理</h2>
 
-<h3 id="ctx-session">7.1 Session — 消息容器</h3>
+<h3 id="ctx-builder">7.1 SystemPromptBuilder — 渐进式上下文暴露</h3>
+
+<p>这是 Lumen 上下文工程里最关键的一块,设计哲学是 <b>progressive context exposure</b>:把"模型需要知道的所有东西"按 <i>静态性 / 体积 / 缓存友好度</i> 拆成三个层级,而不是一股脑塞进 system prompt。</p>
+
+<table>
+  <thead><tr><th>层级</th><th>内容</th><th>大小</th><th>注入位置</th><th>缓存?</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>静态 system prompt</b></td>
+      <td>角色 · 系统规则 · 工具使用规范 · tone/style · 激活的 Mode 段</td>
+      <td>~3KB</td>
+      <td>API 的 <code>system</code> 字段</td>
+      <td><span class="pill ok">是</span></td>
+    </tr>
+    <tr>
+      <td><b>ContextReminder</b></td>
+      <td>cwd · 当前日期 · Git 状态 · ENGRAM 记忆</td>
+      <td>1–5KB</td>
+      <td>首条 <code>user</code> 消息,包在 <code>&lt;system-reminder&gt;</code> 标签里</td>
+      <td><span class="pill">否</span></td>
+    </tr>
+    <tr>
+      <td><b>项目结构</b></td>
+      <td>文件树 · README · 源码</td>
+      <td>0(不预加载)</td>
+      <td>LLM 自己用 <code>tree</code>/<code>glob</code>/<code>grep</code>/<code>read_file</code> 按需取</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout note">
+  <span class="lab">为什么这么设计</span>
+  <b>第一</b>,静态 system prompt 永远不变,Anthropic 的 prompt cache 能稳定命中;Git/ENGRAM 是变量,放进去会让缓存失效。
+  <b>第二</b>,把动态上下文伪装成 <code>&lt;system-reminder&gt;</code> 包裹的 user 消息,模型可以根据相关性自行忽略——它本质上是"提示"而非"指令"。
+  <b>第三</b>,传统做法在启动时跑一遍 <code>tree</code> 把目录贴进 system(10–20K tokens),Lumen 完全不预扫描,让 LLM 按需探,冷启动 token 从 ~20K 降到 ~3KB。
+</div>
+
+<div class="filebar"><b>lumen/context/system_prompt.py</b><span class="lang">python</span></div>
+<pre><code class="language-python">class SystemPromptBuilder:
+    """
+    三层渐进式暴露 — 初始 token 成本约 1–2K(而非 10–20K)。
+    """
+
+    def __init__(
+        self,
+        extra_instructions: str = "",
+        cwd: Path | None = None,
+        inject_git_state: bool = True,
+        inject_memory: bool = True,
+        review_mode: bool = False,
+    ) -> None:
+        self._extra = extra_instructions.strip()
+        self._cwd = (cwd or Path.cwd()).resolve()
+        self._inject_git = inject_git_state
+        self._inject_memory = inject_memory
+        self._modes: ModeStack = build_default_stack()
+        if review_mode:
+            self._modes.activate("review")
+        self._cached_system: str | None = None
+        self._cached_context: str | None = None
+        self._context_built = False
+
+    async def build(self) -> str:
+        """返回静态 system prompt(_BASE_PROMPT + Mode 段 + extra),memoize 一次。"""
+        if self._cached_system is not None:
+            return self._cached_system
+        parts: list[str] = [_BASE_PROMPT]
+        mode_prompt = self._modes.build_prompt()
+        if mode_prompt:
+            parts.append(mode_prompt)
+        if self._extra:
+            parts.append(self._extra)
+        self._cached_system = "\n\n".join(parts)
+        return self._cached_system
+
+    async def build_context_reminder(self) -> str | None:
+        """
+        构造 <system-reminder>...</system-reminder> 字符串作为 user 消息注入。
+        包含 cwd / 当前日期 / Git 状态(可选) / ENGRAM 记忆(可选)。
+        每个 session 只构造一次,后续 memoize。
+        """
+        if self._context_built:
+            return self._cached_context
+        self._cached_context = await _build_context_reminder(
+            self._cwd, self._inject_git, self._inject_memory,
+        )
+        self._context_built = True
+        return self._cached_context
+
+    def enable_review_mode(self) -> None: ...
+    def enable_plan_mode(self)   -> None: ...   # 激活模式会使 _cached_system 失效</code></pre>
+
+<h4>静态 system prompt 的 7 个段(_BASE_PROMPT)</h4>
+
+<div class="filebar"><b>system_prompt.py 内部</b><span class="lang">python</span></div>
+<pre><code class="language-python">_BASE_PROMPT = "\n\n".join([
+    _intro_section(),              # 1. Intro / role
+    _system_section(),             # 2. # System(输出/拒绝/注入提示)
+    _doing_tasks_section(),        # 3. # Doing tasks(读文件、最小改动、无多余 try/except)
+    _actions_section(),            # 4. # Executing actions with care(rm/push 等确认)
+    _tools_section(),              # 5. # Using your tools(优先用专用工具而非 bash)
+    _tone_section(),               # 6. # Tone and style(简短、file:line、不用 emoji)
+    _output_efficiency_section(),  # 7. # Output efficiency(直奔结论,不复述用户)
+])</code></pre>
+
+<h4>ContextReminder 实际形态</h4>
+
+<p>下面是一次调用真正发到 API 的<b>首条 user 消息</b>的内容(简化):</p>
+
+<div class="filebar"><b>messages[0]  (role: user)</b><span class="lang">text</span></div>
+<pre><code>&lt;system-reminder&gt;
+As you answer the user's questions, you can use the following context:
+
+# Working Directory
+/Users/bootscoder/Desktop/project-code-agent/lumen
+
+# Current Date
+2026-05-19 (UTC)
+
+# Git State
+branch: main
+status: clean (1 ahead of origin/main)
+
+# Memory
+[merged content of ENGRAM.md across 4 layers]
+
+IMPORTANT: this context may or may not be relevant to your tasks.
+You should not respond to this context unless it is highly relevant to your task.
+&lt;/system-reminder&gt;</code></pre>
+
+<h4>三个澄清</h4>
+
+<ul>
+  <li><b>SessionMemory(TF-IDF) 不在这里</b>:动态会话记忆走自己的检索通道,在需要时由 Agent 单独注入到消息流,与 SystemPromptBuilder 无关。早先文档版本写错了。</li>
+  <li><b>Modes 在静态层</b>:激活 <code>review</code> / <code>plan</code> 等模式只会改 _BASE_PROMPT 后面追加的段,不会污染 ContextReminder。切换模式后 <code>_cached_system</code> 失效、重建。</li>
+  <li><b>Reminder memoize 整个 session</b>:Git 状态、ENGRAM 在单次会话中只读一次,即使后续 git 提交变化也不会影响——为缓存命中率换取实时性。</li>
+</ul>
+
+<h3 id="ctx-session">7.2 Session — 消息容器</h3>
 
 <p>Session 是消息列表的薄包装,提供按角色查询、token 计数、序列化等便利方法,具体见 <a href="../lumen/context/session.py"><code>lumen/context/session.py</code></a>。</p>
 
@@ -967,7 +1113,7 @@ class Session:
     @classmethod
     def from_json(cls, s) -> "Session":  ...</code></pre>
 
-<h3 id="ctx-transcript">7.2 Transcript — JSONL 自动持久化</h3>
+<h3 id="ctx-transcript">7.3 Transcript — JSONL 自动持久化</h3>
 
 <p>每条消息都会被追加到 <code>~/.lumen/projects/{sanitized_cwd}/{session_id}.jsonl</code>。这是 crash-safe 的核心机制——即使进程崩溃,最后一条没刷盘的消息最多丢失,前面的对话完整保留。</p>
 
@@ -1009,7 +1155,7 @@ class TranscriptReader:
 {"role":"assistant","content":"Found the typo on line 12. Let me fix it."}
 {"_meta":{"title":"Fix README typo","last_prompt":"Fix the typo in README.","message_count":4}}</code></pre>
 
-<h3 id="ctx-compact">7.3 自动压缩</h3>
+<h3 id="ctx-compact">7.4 自动压缩</h3>
 
 <p>压缩决策模块位于 <a href="../lumen/compact/auto_compact.py"><code>compact/auto_compact.py</code></a>,核心是 <b>三个阈值</b>:</p>
 
@@ -1067,7 +1213,7 @@ class ContextWindowState:
             kept_recent_count=keep_recent,
         )</code></pre>
 
-<h3 id="ctx-memory">7.4 ENGRAM 四级记忆</h3>
+<h3 id="ctx-memory">7.5 ENGRAM 四级记忆</h3>
 
 <p>四级优先级、自动发现、低优先级先加载、高优先级覆盖:</p>
 
@@ -1083,7 +1229,7 @@ class ContextWindowState:
 
 <p>加载结果会被拼接进 system prompt,详见 <a href="../lumen/context/memory.py"><code>context/memory.py</code></a> 与 <a href="../lumen/context/system_prompt.py"><code>system_prompt.py</code></a>。</p>
 
-<h3 id="ctx-sessmem">7.5 SessionMemory — 动态会话记忆</h3>
+<h3 id="ctx-sessmem">7.6 SessionMemory — 动态会话记忆</h3>
 
 <p>这一层是"对话过程中"自动抽取出来的事实(偏好 / 项目 / 模式 / 引用 / 纠正),用 <b>TF-IDF</b> 做检索,Jaccard 去重,无需向量库。</p>
 
@@ -1127,7 +1273,7 @@ class SessionMemoryManager:
     def retrieve(self, query: str, k: int = 5) -> list[MemoryEntry]:
         """TF-IDF 相似度排名,Jaccard 去重。"""</code></pre>
 
-<h3 id="ctx-mode">7.6 ModeStack — 可叠加的系统提示层</h3>
+<h3 id="ctx-mode">7.7 ModeStack — 可叠加的系统提示层</h3>
 
 <p>把 system prompt 拆成可叠加的"模式":普通对话、代码深读模式、Review 模式等。每个 Mode 可以注入一段系统提示和一组 default tool 偏好。</p>
 
